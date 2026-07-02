@@ -120,3 +120,53 @@ def test_kb_endpoints(client):
 def test_project_404(client):
     assert client.get("/api/projects/nope").status_code == 404
     assert client.get("/api/projects/nope/diagnostics").status_code == 404
+
+
+@requires_data
+def test_roadmap_chat_export_endpoints(client):
+    """P6: роадмап (409 на конфликт), чат (офлайн-фоллбэк), экспорт."""
+    pid = client.post("/api/projects", json={"plant": "НОФ"}).json()["id"]
+    path = find_case_file(r"Пример 2/Хвосты.*Вкр\.xlsx$")
+    with open(path, "rb") as f:
+        client.post(f"/api/projects/{pid}/report",
+                    files={"file": ("Хвосты НОФ Вкр.xlsx", f.read())})
+    hyps = client.post(f"/api/projects/{pid}/hypotheses/generate", json={}).json()
+
+    # роадмап без принятых -> 422
+    assert client.post(f"/api/projects/{pid}/roadmap/build").status_code == 422
+
+    # принимаем две конфликтующие по мельнице (liner) и одну флотационную
+    liner = [h for h in hyps if h["hypothesis_type"] in ("liner", "automation")][:2]
+    flot = [h for h in hyps if h["process_area"] == "флотация"][:1]
+    for h in liner + flot:
+        client.post(f"/api/hypotheses/{h['id']}/feedback", json={"action": "accept"})
+
+    items = client.post(f"/api/projects/{pid}/roadmap/build").json()
+    assert items and client.get(f"/api/projects/{pid}/roadmap").json() == items
+
+    # PATCH со сдвигом в конфликт -> 409
+    pilots = [i for i in items if i["stage"] == "pilot"]
+    same_res = {}
+    for i in pilots:
+        same_res.setdefault(i["resource"], []).append(i)
+    conflict_group = next((v for v in same_res.values() if len(v) >= 2), None)
+    if conflict_group:
+        a, b = conflict_group[0], conflict_group[1]
+        r = client.patch(f"/api/roadmap/items/{b['id']}", json={"start": a["start"]})
+        assert r.status_code == 409
+        assert "сдвиг невозможен" in r.json()["detail"]
+
+    # чат: LLM замокана как недоступная -> детерминированный ответ со ссылками
+    r = client.post(f"/api/projects/{pid}/chat", json={"message": "объясни главный диагноз"})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["references"] and body["references"][0]["type"] == "rule"
+
+    # экспорт
+    r = client.get(f"/api/projects/{pid}/export/docx")
+    assert r.status_code == 200 and r.content[:2] == b"PK"
+    r = client.get(f"/api/projects/{pid}/export/tasks.csv")
+    assert r.status_code == 200 and "stage" in r.text.splitlines()[0]
+    r = client.get(f"/api/projects/{pid}/export/json")
+    assert r.status_code == 200
+    assert r.json()["project"]["id"] == pid

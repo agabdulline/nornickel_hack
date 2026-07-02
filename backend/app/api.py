@@ -255,6 +255,130 @@ def expert_titles_for_plant(plant: str) -> list[str]:
     return []
 
 
+# ---------- чат-интерпретатор (8.1) ----------
+class ChatIn(BaseModel):
+    message: str
+    history: list[dict] = Field(default_factory=list)
+    tail_type: str | None = None
+
+
+@router.post("/projects/{pid}/chat")
+def project_chat(pid: str, body: ChatIn, store: Store = Depends(get_store),
+                 kb: KBIndex = Depends(get_kb)) -> dict:
+    from . import chat as chat_mod
+    project = _project_or_404(pid, store)
+    got = store.get_reports(pid)
+    if not got:
+        raise HTTPException(404, "сначала загрузите отчёт")
+    reports, _meta = got
+    report = _pick_report(reports, body.tail_type)
+    diag = run_diagnostics(report)
+    hyps = store.get_hypotheses(pid)
+    ans = chat_mod.answer(body.message, body.history, report, diag, hyps,
+                          project, kb_index=kb, llm=llm_client)
+    return ans.model_dump()
+
+
+# ---------- дорожная карта (8.2) ----------
+@router.post("/projects/{pid}/roadmap/build")
+def roadmap_build(pid: str, store: Store = Depends(get_store)) -> list[dict]:
+    from .hypotheses.roadmap import build_roadmap
+    _project_or_404(pid, store)
+    accepted = store.get_hypotheses(pid, statuses=["accepted", "testing"])
+    if not accepted:
+        raise HTTPException(422, "нет принятых гипотез — примите хотя бы одну")
+    items = build_roadmap(accepted)
+    payload = [it.model_dump() for it in items]
+    store.save_roadmap(pid, payload)
+    return payload
+
+
+@router.get("/projects/{pid}/roadmap")
+def roadmap_get(pid: str, store: Store = Depends(get_store)) -> list[dict]:
+    _project_or_404(pid, store)
+    return store.get_roadmap(pid)
+
+
+class RoadmapPatch(BaseModel):
+    start: str  # ISO-дата
+
+
+@router.patch("/roadmap/items/{item_id}")
+def roadmap_patch(item_id: str, body: RoadmapPatch,
+                  store: Store = Depends(get_store)) -> dict:
+    from datetime import date as _date
+    from .hypotheses.roadmap import move_item
+    from .models import RoadmapItem
+    pid = item_id.split(":")[0]
+    got = store.get_hypothesis(pid)
+    if not got:
+        raise HTTPException(404, "стадия не найдена")
+    _h, project_id = got
+    items = [RoadmapItem(**x) for x in store.get_roadmap(project_id)]
+    if not items:
+        raise HTTPException(404, "дорожная карта не построена")
+    try:
+        new_start = _date.fromisoformat(body.start)
+    except ValueError:
+        raise HTTPException(422, "start: ожидается ISO-дата YYYY-MM-DD")
+    ok, reason = move_item(items, item_id, new_start)
+    if not ok:
+        raise HTTPException(409, f"сдвиг невозможен: {reason}")
+    store.save_roadmap(project_id, [it.model_dump() for it in items])
+    return {"items": [it.model_dump() for it in items]}
+
+
+# ---------- экспорт ----------
+@router.get("/projects/{pid}/export/docx")
+def export_docx(pid: str, tail_type: str | None = None,
+                store: Store = Depends(get_store)):
+    from fastapi.responses import Response
+    from .export.report_docx import build_report_docx
+    from .models import RoadmapItem
+    project = _project_or_404(pid, store)
+    got = store.get_reports(pid)
+    if not got:
+        raise HTTPException(404, "отчёт ещё не загружен")
+    reports, _meta = got
+    report = _pick_report(reports, tail_type)
+    diag = run_diagnostics(report)
+    hyps = store.get_hypotheses(pid)
+    roadmap = [RoadmapItem(**x) for x in store.get_roadmap(pid)]
+    data = build_report_docx(project, report, diag, hyps, roadmap)
+    return Response(
+        content=data,
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        headers={"Content-Disposition": 'attachment; filename="hypotheses_report.docx"'})
+
+
+@router.get("/projects/{pid}/export/tasks.csv")
+def export_tasks(pid: str, store: Store = Depends(get_store)):
+    from fastapi.responses import Response
+    from .export.tasks import to_tasks_csv
+    from .models import RoadmapItem
+    _project_or_404(pid, store)
+    hyps = store.get_hypotheses(pid)
+    roadmap = [RoadmapItem(**x) for x in store.get_roadmap(pid)]
+    csv_text = to_tasks_csv(hyps, roadmap or None)
+    return Response(content=csv_text.encode("utf-8"), media_type="text/csv; charset=utf-8",
+                    headers={"Content-Disposition": 'attachment; filename="tasks.csv"'})
+
+
+@router.get("/projects/{pid}/export/json")
+def export_json(pid: str, tail_type: str | None = None,
+                store: Store = Depends(get_store)) -> dict:
+    from .export.tasks import to_project_json
+    from .models import RoadmapItem
+    project = _project_or_404(pid, store)
+    got = store.get_reports(pid)
+    reports, _meta = got if got else ([], {})
+    report = _pick_report(reports, tail_type) if reports else None
+    diag = run_diagnostics(report) if report else None
+    hyps = store.get_hypotheses(pid)
+    roadmap = [RoadmapItem(**x) for x in store.get_roadmap(pid)]
+    return to_project_json(project, report, diag, hyps, roadmap)
+
+
 # ---------- база знаний ----------
 @router.post("/kb/upload")
 async def kb_upload(file: UploadFile, kb: KBIndex = Depends(get_kb)) -> dict:

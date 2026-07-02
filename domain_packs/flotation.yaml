@@ -1,0 +1,149 @@
+# Доменный пакет «флотация Cu-Ni руд».
+# Всё доменно-специфичное: синонимы меток, онтология оборудования,
+# коэффициенты эффекта, профили проверки, типовые распределения для восстановления.
+
+elements:
+  # в данных элементы анонимизированы
+  aliases:
+    "Элемент 28": "Ni"
+    "Элемент 29": "Cu"
+  price_usd_per_tonne:
+    Ni: 16500
+    Cu: 9000
+
+size_classes:
+  canonical: ["+125", "-125+71", "-71+45", "-45+20", "-20+10", "-10"]
+  # парсер нормализует метки регексом по числам (метки «гуляют» между файлами:
+  # «+71» vs «-125 +71», ведущие пробелы « -20 + 10»)
+
+mineral_forms:
+  # regex (без учёта регистра) -> каноническая форма
+  synonyms:
+    - pattern: "раскрыт"
+      canonical: "Раскрытый Pnt/Cp"
+    - pattern: "закрыт"
+      canonical: "Закрытый Pnt/Cp"
+    - pattern: "пирротин"
+      canonical: "Примесь в пирротине"
+    - pattern: "силикат|валлериит"
+      canonical: "Силикатная форма"
+    - pattern: "миллерит"
+      canonical: "Миллерит"
+    - pattern: "пирит"
+      canonical: "Пирит"
+
+# типовые доли форм в потерях класса, % (справочник для яруса 2 восстановления, 7.1).
+# Диапазоны сняты с целых блоков Примеров 2-4; уточняются в P1 по фактическим данным.
+typical_distribution:
+  "+125":
+    "Раскрытый Pnt/Cp": [3, 15]
+    "Закрытый Pnt/Cp": [35, 65]
+    "Примесь в пирротине": [3, 20]
+    "Силикатная форма": [15, 45]
+    "Пирит": [0, 10]
+    "Миллерит": [0, 5]
+  "-125+71":
+    "Раскрытый Pnt/Cp": [5, 20]
+    "Закрытый Pnt/Cp": [30, 60]
+    "Примесь в пирротине": [5, 20]
+    "Силикатная форма": [15, 40]
+    "Пирит": [0, 10]
+    "Миллерит": [0, 5]
+  "-71+45":
+    "Раскрытый Pnt/Cp": [10, 30]
+    "Закрытый Pnt/Cp": [20, 50]
+    "Примесь в пирротине": [5, 25]
+    "Силикатная форма": [10, 35]
+    "Пирит": [0, 10]
+    "Миллерит": [0, 5]
+  "-45+20":
+    "Раскрытый Pnt/Cp": [15, 40]
+    "Закрытый Pnt/Cp": [15, 40]
+    "Примесь в пирротине": [5, 25]
+    "Силикатная форма": [10, 30]
+    "Пирит": [0, 10]
+    "Миллерит": [0, 5]
+  "-20+10":
+    "Раскрытый Pnt/Cp": [20, 50]
+    "Закрытый Pnt/Cp": [10, 30]
+    "Примесь в пирротине": [5, 25]
+    "Силикатная форма": [10, 30]
+    "Пирит": [0, 15]
+    "Миллерит": [0, 5]
+  "-10":
+    "Раскрытый Pnt/Cp": [25, 55]
+    "Закрытый Pnt/Cp": [5, 25]
+    "Примесь в пирротине": [5, 25]
+    "Силикатная форма": [10, 30]
+    "Пирит": [0, 20]
+    "Миллерит": [0, 5]
+
+# коэффициент захвата эффекта по типу гипотезы: tonnes_expected = tonnes_max * capture_rate
+hypothesis_types:
+  regrind:        {label: "Доизмельчение / сепарация надцелевого класса", capture_rate: 0.28}
+  liner:          {label: "Футеровка / шаровая загрузка мельниц",          capture_rate: 0.22}
+  classification: {label: "Классификация (насадки ГЦ, классификаторы)",    capture_rate: 0.25}
+  screening:      {label: "Тонкое грохочение",                             capture_rate: 0.25}
+  flotation_time: {label: "Фронт/время флотации",                          capture_rate: 0.20}
+  reagent:        {label: "Реагентный режим",                              capture_rate: 0.15}
+  density:        {label: "Плотность пульпы / вода",                       capture_rate: 0.15}
+  magnetic:       {label: "Магнитная сепарация",                           capture_rate: 0.20}
+  automation:     {label: "Автоматизация / контроль гранулометрии",        capture_rate: 0.15}
+  crushing:       {label: "Дробление",                                     capture_rate: 0.18}
+  contact_tank:   {label: "Контактные чаны",                               capture_rate: 0.15}
+  gravity:        {label: "Гравитация",                                    capture_rate: 0.18}
+  other:          {label: "Прочее",                                        capture_rate: 0.15}
+
+# профили дорожной карты (8.2): недели по стадиям, пропуск лабы, занимаемый ресурс
+verification_profiles:
+  regrind:        {lab_weeks: 4, pilot_weeks: 8, rollout_weeks: 4, skip_lab: false, occupied_resource: "мельница"}
+  liner:          {lab_weeks: 2, pilot_weeks: 8, rollout_weeks: 4, skip_lab: false, occupied_resource: "мельница"}
+  classification: {lab_weeks: 2, pilot_weeks: 4, rollout_weeks: 2, skip_lab: true,  occupied_resource: "классификация"}
+  screening:      {lab_weeks: 3, pilot_weeks: 6, rollout_weeks: 4, skip_lab: false, occupied_resource: "классификация"}
+  flotation_time: {lab_weeks: 2, pilot_weeks: 6, rollout_weeks: 2, skip_lab: false, occupied_resource: "секция флотации"}
+  reagent:        {lab_weeks: 3, pilot_weeks: 6, rollout_weeks: 2, skip_lab: true,  occupied_resource: "секция флотации"}
+  density:        {lab_weeks: 2, pilot_weeks: 4, rollout_weeks: 2, skip_lab: true,  occupied_resource: "секция флотации"}
+  magnetic:       {lab_weeks: 3, pilot_weeks: 8, rollout_weeks: 4, skip_lab: false, occupied_resource: "вспомогательный передел"}
+  automation:     {lab_weeks: 2, pilot_weeks: 6, rollout_weeks: 3, skip_lab: true,  occupied_resource: "КИПиА"}
+  crushing:       {lab_weeks: 2, pilot_weeks: 6, rollout_weeks: 3, skip_lab: true,  occupied_resource: "дробление"}
+  contact_tank:   {lab_weeks: 2, pilot_weeks: 6, rollout_weeks: 3, skip_lab: false, occupied_resource: "секция флотации"}
+  gravity:        {lab_weeks: 3, pilot_weeks: 8, rollout_weeks: 4, skip_lab: false, occupied_resource: "вспомогательный передел"}
+  other:          {lab_weeks: 3, pilot_weeks: 6, rollout_weeks: 3, skip_lab: false, occupied_resource: "лаборатория"}
+
+roadmap:
+  lab_capacity: 2          # max одновременных лабораторных программ
+  horizon_months: 24
+
+# онтология оборудования фабрики (из списка оборудования кейса)
+equipment:
+  - {name: "МШЦ 4,5×6,0", type: "мельница шаровая с центральной разгрузкой", positions: ["4-2", "5-3", "5-5"]}
+  - {name: "МШРГУ 4,5×6,0", type: "мельница шаровая с решёткой", positions: ["4-3", "5-1", "5-2", "5-4"]}
+  - {name: "МШР 3,2×3,8", type: "мельница шаровая", positions: ["4-5", "4-11"]}
+  - {name: "1КСП24", type: "классификатор спиральный", positions: []}
+  - {name: "2КСН24", type: "классификатор спиральный", positions: []}
+  - {name: "ГЦ-660", type: "гидроциклон", positions: ["4-2", "5-3", "5-5"]}
+  - {name: "ФПМ-16-4К", type: "флотомашина", positions: [], count: 29}
+  - {name: "ФМ-16УМ-4К", type: "флотомашина", positions: [], count: 4}
+  - {name: "КРД 700/75", type: "дробилка крупного дробления", positions: []}
+  - {name: "КМД-2200Т", type: "дробилка мелкого дробления", positions: []}
+  - {name: "Sibra 2DR", type: "грохот", positions: []}
+  - {name: "П-30", type: "сгуститель", positions: []}
+  - {name: "П-50", type: "сгуститель", positions: []}
+
+# тип гипотезы -> требуемое оборудование (для проверки present_on_plant)
+type_to_equipment:
+  regrind: ["МШР 3,2×3,8", "МШЦ 4,5×6,0"]
+  liner: ["МШЦ 4,5×6,0", "МШРГУ 4,5×6,0", "МШР 3,2×3,8"]
+  classification: ["ГЦ-660", "1КСП24", "2КСН24"]
+  screening: ["Sibra 2DR"]
+  flotation_time: ["ФПМ-16-4К", "ФМ-16УМ-4К"]
+  reagent: ["ФПМ-16-4К"]
+  density: ["ФПМ-16-4К"]
+  crushing: ["КРД 700/75", "КМД-2200Т"]
+  magnetic: []          # магнитных сепараторов в списке нет -> present_on_plant=false, capex=high
+  contact_tank: []      # контактных чанов в списке нет
+  gravity: []
+  automation: []
+  other: []
+
+process_areas: ["дробление", "измельчение", "классификация", "флотация", "реагентика", "вспомогательные"]

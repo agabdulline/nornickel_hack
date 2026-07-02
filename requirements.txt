@@ -1,0 +1,14 @@
+# ядро (обязательно)
+fastapi>=0.110
+uvicorn[standard]>=0.29
+openpyxl>=3.1
+PyMuPDF>=1.24
+python-docx>=1.1
+pydantic>=2.6
+rank-bm25>=0.2.2
+rapidfuzz>=3.6
+python-dotenv>=1.0
+httpx>=0.27
+pyyaml>=6.0
+python-multipart>=0.0.9
+pytest>=8.0

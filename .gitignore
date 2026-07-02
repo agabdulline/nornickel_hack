@@ -1,0 +1,25 @@
+# секреты — НИКОГДА не коммитить
+.env
+
+# исходники кейса и архив (лежат локально, read-only)
+data/
+*.zip
+
+# рантайм-хранилище (sqlite, индексы KB, кэш моделей)
+storage/
+models_cache/
+
+# python
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+venv/
+
+# node
+node_modules/
+frontend/dist/
+
+# прочее
+.DS_Store
+*.log

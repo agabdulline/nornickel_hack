@@ -75,6 +75,9 @@ class TailingsReport(BaseModel):
     recoverable_total: dict[str, float] = Field(default_factory=dict)   # т
     recoverable_pct: dict[str, float] = Field(default_factory=dict)     # %
     issues: list[DataIssue] = Field(default_factory=list)
+    # контрольные строки «Итого (проверка)» / «Извлекаемый металл» из файла —
+    # для валидации R5 (сверяются только measured-значения)
+    control_totals: dict = Field(default_factory=dict)
 
     def cell(self, size_class: str, form: str, element: str) -> LossCell | None:
         for c in self.cells:

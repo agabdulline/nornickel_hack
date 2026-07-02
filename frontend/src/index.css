@@ -1,0 +1,34 @@
+@import "tailwindcss";
+
+@theme {
+  --color-accent: #0f766e;          /* тёмно-бирюзовый — единственный акцент */
+  --font-mono: "JetBrains Mono", ui-monospace, "Cascadia Mono", Consolas, monospace;
+}
+
+html { font-size: 14px; }
+body { @apply bg-slate-50 text-slate-900 antialiased; }
+
+.num { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+
+.card { @apply bg-white border border-slate-200 rounded-md shadow-sm; }
+
+.btn { @apply inline-flex items-center gap-1.5 px-3 py-1.5 rounded text-sm font-medium
+  border border-slate-300 bg-white hover:bg-slate-100 cursor-pointer
+  disabled:opacity-40 disabled:cursor-not-allowed transition-colors; }
+.btn-primary { @apply bg-teal-700 text-white border-teal-700 hover:bg-teal-800; }
+.btn-danger { @apply text-red-700 border-red-300 hover:bg-red-50; }
+.btn-ok { @apply text-green-700 border-green-300 hover:bg-green-50; }
+
+.badge { @apply inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium; }
+
+.tbl { @apply w-full text-sm border-collapse; }
+.tbl th { @apply text-left font-semibold text-slate-600 px-2 py-1.5 border-b-2 border-slate-200 whitespace-nowrap; }
+.tbl td { @apply px-2 py-1 border-b border-slate-100; }
+
+.recovered-cell {
+  background: #fef3c7;
+  outline: 1.5px dashed #d97706;
+  outline-offset: -1.5px;
+}
+
+input[type="range"] { accent-color: #0f766e; }

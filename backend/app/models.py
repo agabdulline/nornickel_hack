@@ -101,7 +101,7 @@ class Diagnosis(BaseModel):
 
 class Citation(BaseModel):
     quote: str                                   # <= 40 слов
-    source: str
+    source: str = ""                             # заполняет verify по chunk_id
     page: int | None = None
     chunk_id: str | None = None
     verified: bool = False

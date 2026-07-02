@@ -23,7 +23,9 @@ from .config import Settings, mask_key, settings as default_settings
 
 log = logging.getLogger("llm")
 
-TIMEOUT_STRONG = 120.0
+# ТЗ задавало 120с strong, но deepseek-v4-pro (thinking) на полном промпте
+# генерации стабильно не укладывается — ReadTimeout. 300с с запасом.
+TIMEOUT_STRONG = 300.0
 TIMEOUT_FAST = 60.0
 RETRIES = 3
 

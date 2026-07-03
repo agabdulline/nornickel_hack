@@ -8,6 +8,7 @@ data/
 # рантайм-хранилище (sqlite, индексы KB, кэш моделей)
 storage/
 models_cache/
+chroma/
 
 # python
 __pycache__/

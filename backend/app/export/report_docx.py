@@ -25,7 +25,7 @@ def build_report_docx(project: Project, report: TailingsReport, diag: Diagnostic
     # титул
     title = d.add_heading("Фабрика гипотез — отчёт", level=0)
     title.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    p = d.add_paragraph(f"Проект: {project.plant}")
+    p = d.add_paragraph(f"Проект: {project.name or project.plant}")
     p.add_run(f"\nЦель: {project.goal or '—'}")
     p.add_run(f"\nТип хвостов: {report.tail_type}")
     p.add_run(f"\nДата: {date.today().isoformat()}")

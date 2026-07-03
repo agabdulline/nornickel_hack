@@ -123,6 +123,34 @@ class Equipment(BaseModel):
     status: Literal["в эксплуатации", "резерв", "выведено"] = "в эксплуатации"
 
 
+class Line(BaseModel):
+    """Фабрика/линия или лаборатория — мастер-данные, независимые от жизненного цикла проекта."""
+    id: str
+    name: str
+    type: Literal["factory", "lab"] = "factory"
+
+
+class Material(BaseModel):
+    """Общий справочник материалов/сырья.
+
+    Пока отдельный от графа знаний модуля генерации гипотез (там сущностей
+    «материал» ещё нет) — в будущем стоит объединить с сущностями графа,
+    чтобы «вкрапленная руда» была одной записью, а не двумя независимыми.
+    """
+    id: str
+    name: str
+
+
+class LineMaterial(BaseModel):
+    """Остаток сырья на линии (см. пункт 3 ТЗ по мастер-данным)."""
+    id: str
+    line_id: str
+    material_id: str
+    name: str
+    quantity: float = 0.0
+    unit: Literal["т", "кг", "%", "м³"] = "т"
+
+
 class Effect(BaseModel):
     tonnes_max: float = 0.0
     tonnes_expected: float = 0.0
@@ -184,18 +212,22 @@ class ChatAnswer(BaseModel):
 
 
 class ProjectConstraints(BaseModel):
-    """Раздел «Ограничения» формы создания проекта (аддитивно к строке constraints)."""
-    equipment: list[Equipment] = Field(default_factory=list)   # снимок оборудования линии на момент создания
-    raw_materials: list[str] = Field(default_factory=list)
-    budget_amount: float | None = None
-    budget_currency: str = "RUB"
+    """Раздел «Ограничения» формы создания проекта (аддитивно к строке constraints).
+
+    equipment/materials — НЕ снимок: это всегда live-данные линии (см.
+    Store.constraints_for_project), правки в них пишутся напрямую в мастер-данные
+    линии (write-through), отдельного слепка на момент создания проекта нет.
+    """
+    equipment: list[Equipment] = Field(default_factory=list)
+    materials: list[LineMaterial] = Field(default_factory=list)
     regulatory: list[str] = Field(default_factory=list)        # напр. ["ecology", "industrial_safety", "sector_standard"]
     regulatory_notes: str = ""
 
 
 class Project(BaseModel):
     id: str
-    plant: str
+    name: str = ""       # «Название проекта»; если пусто — фронт подставляет "{линия} · QN YYYY"
+    plant: str            # ссылка на Line.id (историческое имя поля — раньше было свободным текстом)
     goal: str = ""
     constraints: str = ""
     created_at: str = ""

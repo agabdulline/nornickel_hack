@@ -14,7 +14,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from .config import STORAGE
-from .models import Equipment, Hypothesis, Project, ProjectConstraints, TailingsReport
+from .models import (Equipment, Hypothesis, Line, LineMaterial, Material, Project,
+                     ProjectConstraints, TailingsReport)
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS projects (
@@ -39,6 +40,16 @@ CREATE TABLE IF NOT EXISTS equipment (
   id TEXT PRIMARY KEY, line_id TEXT, name TEXT, position TEXT,
   category TEXT, status TEXT
 );
+CREATE TABLE IF NOT EXISTS lines (
+  id TEXT PRIMARY KEY, name TEXT, type TEXT
+);
+CREATE TABLE IF NOT EXISTS materials (
+  id TEXT PRIMARY KEY, name TEXT
+);
+CREATE TABLE IF NOT EXISTS line_materials (
+  id TEXT PRIMARY KEY, line_id TEXT, material_id TEXT, name TEXT,
+  quantity REAL, unit TEXT
+);
 """
 
 # сид онтологии оборудования (раздел «Ограничения») для демо-линии кейса;
@@ -51,6 +62,19 @@ _SEED_EQUIPMENT: dict[str, list[dict]] = {
         {"name": "Мельница МШРГУ 4,5×6,0", "position": "5-1", "category": "мельница"},
         {"name": "Флотомашина ФПМ-16-4К", "position": "3-2", "category": "флотомашина"},
         {"name": "Сгуститель П-30", "position": "7-1", "category": "сгуститель"},
+    ],
+}
+
+# сид линий/лабораторий: id совпадает с прежним свободным именем линии —
+# так первая итерация (equipment.line_id == "НОФ · вкрапленные руды") не ломается
+_SEED_LINES: list[dict] = [
+    {"id": "НОФ · вкрапленные руды", "name": "НОФ · вкрапленные руды", "type": "factory"},
+    {"id": "Лаборатория / НИОКР", "name": "Лаборатория / НИОКР", "type": "lab"},
+]
+
+_SEED_MATERIALS: dict[str, list[dict]] = {
+    "НОФ · вкрапленные руды": [
+        {"name": "Вкрапленная руда", "quantity": 1200.0, "unit": "т"},
     ],
 }
 
@@ -72,7 +96,10 @@ class Store:
         self._conn.row_factory = sqlite3.Row
         self._conn.executescript(_SCHEMA)
         self._migrate_project_constraints()
+        self._migrate_project_name()
         self._seed_equipment()
+        self._seed_lines()
+        self._seed_materials()
         self._conn.commit()
 
     def _migrate_project_constraints(self):
@@ -80,6 +107,12 @@ class Store:
         cols = {r["name"] for r in self._conn.execute("PRAGMA table_info(projects)")}
         if "project_constraints_json" not in cols:
             self._conn.execute("ALTER TABLE projects ADD COLUMN project_constraints_json TEXT")
+
+    def _migrate_project_name(self):
+        """Аддитивная миграция: старые БД созданы до появления поля «Название проекта»."""
+        cols = {r["name"] for r in self._conn.execute("PRAGMA table_info(projects)")}
+        if "name" not in cols:
+            self._conn.execute("ALTER TABLE projects ADD COLUMN name TEXT")
 
     def _seed_equipment(self):
         for line_id, items in _SEED_EQUIPMENT.items():
@@ -93,11 +126,32 @@ class Store:
                     (uuid.uuid4().hex[:10], line_id, item["name"], item["position"],
                      item["category"], "в эксплуатации"))
 
+    def _seed_lines(self):
+        existing = self._conn.execute("SELECT COUNT(*) c FROM lines").fetchone()["c"]
+        if existing:
+            return
+        for line in _SEED_LINES:
+            self._conn.execute("INSERT INTO lines VALUES (?,?,?)",
+                               (line["id"], line["name"], line["type"]))
+
+    def _seed_materials(self):
+        existing = self._conn.execute("SELECT COUNT(*) c FROM line_materials").fetchone()["c"]
+        if existing:
+            return
+        for line_id, items in _SEED_MATERIALS.items():
+            for item in items:
+                mat = self._find_or_create_material(item["name"])
+                self._conn.execute(
+                    "INSERT INTO line_materials VALUES (?,?,?,?,?,?)",
+                    (uuid.uuid4().hex[:10], line_id, mat.id, mat.name,
+                     item["quantity"], item["unit"]))
+
     # ---------- проекты ----------
     def create_project(self, plant: str, goal: str = "", constraints: str = "",
                        weights: dict | None = None,
-                       project_constraints: ProjectConstraints | None = None) -> Project:
-        p = Project(id=uuid.uuid4().hex[:10], plant=plant, goal=goal,
+                       project_constraints: ProjectConstraints | None = None,
+                       name: str = "") -> Project:
+        p = Project(id=uuid.uuid4().hex[:10], plant=plant, goal=goal, name=name,
                     constraints=constraints, created_at=_now())
         if weights:
             p.weights = weights
@@ -106,12 +160,12 @@ class Store:
         with self._lock:
             self._conn.execute(
                 "INSERT INTO projects (id, plant, goal, constraints, created_at, "
-                "weights_json, stoplist_json, project_constraints_json) VALUES (?,?,?,?,?,?,?,?)",
+                "weights_json, stoplist_json, project_constraints_json, name) VALUES (?,?,?,?,?,?,?,?,?)",
                 (p.id, p.plant, p.goal, p.constraints, p.created_at,
                  json.dumps(p.weights), json.dumps(p.stoplist, ensure_ascii=False),
-                 p.project_constraints.model_dump_json()))
+                 p.project_constraints.model_dump_json(), p.name))
             self._conn.commit()
-        return p
+        return self.get_project(p.id)
 
     def get_project(self, pid: str) -> Project | None:
         with self._lock:
@@ -120,11 +174,29 @@ class Store:
                 return None
             raw_pc = row["project_constraints_json"] if "project_constraints_json" in row.keys() else None
             pc = ProjectConstraints(**json.loads(raw_pc)) if raw_pc else ProjectConstraints()
-            return Project(id=row["id"], plant=row["plant"], goal=row["goal"],
-                           constraints=row["constraints"], created_at=row["created_at"],
-                           weights=json.loads(row["weights_json"] or "{}"),
-                           stoplist=json.loads(row["stoplist_json"] or "[]"),
-                           project_constraints=pc)
+            p = Project(id=row["id"], plant=row["plant"], goal=row["goal"],
+                       name=(row["name"] if "name" in row.keys() else None) or "",
+                       constraints=row["constraints"], created_at=row["created_at"],
+                       weights=json.loads(row["weights_json"] or "{}"),
+                       stoplist=json.loads(row["stoplist_json"] or "[]"),
+                       project_constraints=pc)
+        return self.constraints_for_project(p)
+
+    def constraints_for_project(self, p: Project) -> Project:
+        """Оверлей live-данных линии (оборудование/сырьё) поверх project_constraints.
+
+        Это и есть write-through из п.7 ТЗ: equipment/materials никогда не
+        читаются как снимок из project_constraints_json — только из мастер-данных
+        линии по p.plant (=line_id), так что правки в «Базе знаний» сразу видны
+        в проекте и наоборот.
+        """
+        line = self.get_line(p.plant)
+        if line and line.type == "lab":
+            p.project_constraints.equipment = []
+        else:
+            p.project_constraints.equipment = self.list_equipment(p.plant)
+        p.project_constraints.materials = self.list_line_materials(p.plant)
+        return p
 
     def list_projects(self) -> list[Project]:
         with self._lock:
@@ -135,10 +207,120 @@ class Store:
         with self._lock:
             self._conn.execute(
                 "UPDATE projects SET weights_json=?, stoplist_json=?, goal=?, constraints=?, "
-                "project_constraints_json=? WHERE id=?",
+                "project_constraints_json=?, name=? WHERE id=?",
                 (json.dumps(p.weights), json.dumps(p.stoplist, ensure_ascii=False),
-                 p.goal, p.constraints, p.project_constraints.model_dump_json(), p.id))
+                 p.goal, p.constraints, p.project_constraints.model_dump_json(), p.name, p.id))
             self._conn.commit()
+
+    # ---------- линии/лаборатории (мастер-данные) ----------
+    def list_lines(self) -> list[Line]:
+        with self._lock:
+            rows = self._conn.execute("SELECT * FROM lines ORDER BY name").fetchall()
+            return [Line(id=r["id"], name=r["name"], type=r["type"] or "factory") for r in rows]
+
+    def get_line(self, line_id: str) -> Line | None:
+        with self._lock:
+            row = self._conn.execute("SELECT * FROM lines WHERE id=?", (line_id,)).fetchone()
+            return Line(id=row["id"], name=row["name"], type=row["type"] or "factory") if row else None
+
+    def create_line(self, name: str, type: str = "factory") -> Line:
+        line = Line(id=uuid.uuid4().hex[:10], name=name, type=type)
+        with self._lock:
+            self._conn.execute("INSERT INTO lines VALUES (?,?,?)", (line.id, line.name, line.type))
+            self._conn.commit()
+        return line
+
+    def update_line(self, line_id: str, name: str | None = None, type: str | None = None) -> Line | None:
+        with self._lock:
+            line = self.get_line(line_id)
+            if not line:
+                return None
+            if name is not None:
+                line.name = name
+            if type is not None:
+                line.type = type
+            self._conn.execute("UPDATE lines SET name=?, type=? WHERE id=?",
+                               (line.name, line.type, line.id))
+            self._conn.commit()
+        return line
+
+    # ---------- справочник материалов (переиспользуется в ограничениях проекта) ----------
+    def list_materials(self) -> list[Material]:
+        with self._lock:
+            rows = self._conn.execute("SELECT * FROM materials ORDER BY name").fetchall()
+            return [Material(id=r["id"], name=r["name"]) for r in rows]
+
+    def _find_or_create_material(self, name: str) -> Material:
+        name = name.strip()
+        row = self._conn.execute(
+            "SELECT * FROM materials WHERE lower(name)=lower(?)", (name,)).fetchone()
+        if row:
+            return Material(id=row["id"], name=row["name"])
+        mat = Material(id=uuid.uuid4().hex[:10], name=name)
+        self._conn.execute("INSERT INTO materials VALUES (?,?)", (mat.id, mat.name))
+        return mat
+
+    def find_or_create_material(self, name: str) -> Material:
+        with self._lock:
+            mat = self._find_or_create_material(name)
+            self._conn.commit()
+        return mat
+
+    # ---------- сырьё линии ----------
+    def list_line_materials(self, line_id: str) -> list[LineMaterial]:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT * FROM line_materials WHERE line_id=? ORDER BY name", (line_id,)).fetchall()
+            return [LineMaterial(id=r["id"], line_id=r["line_id"], material_id=r["material_id"],
+                                 name=r["name"], quantity=r["quantity"] or 0.0,
+                                 unit=r["unit"] or "т") for r in rows]
+
+    def add_line_material(self, line_id: str, name: str, quantity: float = 0.0,
+                          unit: str = "т", material_id: str | None = None) -> LineMaterial:
+        with self._lock:
+            mat = None
+            if material_id:
+                row = self._conn.execute("SELECT * FROM materials WHERE id=?", (material_id,)).fetchone()
+                mat = Material(id=row["id"], name=row["name"]) if row else None
+            if mat is None:
+                mat = self._find_or_create_material(name)
+            lm = LineMaterial(id=uuid.uuid4().hex[:10], line_id=line_id, material_id=mat.id,
+                              name=mat.name, quantity=quantity, unit=unit)
+            self._conn.execute("INSERT INTO line_materials VALUES (?,?,?,?,?,?)",
+                               (lm.id, lm.line_id, lm.material_id, lm.name, lm.quantity, lm.unit))
+            self._conn.commit()
+        return lm
+
+    def update_line_material(self, lm_id: str, quantity: float | None = None,
+                             unit: str | None = None, name: str | None = None,
+                             material_id: str | None = None) -> LineMaterial | None:
+        with self._lock:
+            row = self._conn.execute("SELECT * FROM line_materials WHERE id=?", (lm_id,)).fetchone()
+            if not row:
+                return None
+            lm = LineMaterial(id=row["id"], line_id=row["line_id"], material_id=row["material_id"],
+                              name=row["name"], quantity=row["quantity"] or 0.0, unit=row["unit"] or "т")
+            if quantity is not None:
+                lm.quantity = quantity
+            if unit is not None:
+                lm.unit = unit
+            if material_id is not None:
+                mrow = self._conn.execute("SELECT * FROM materials WHERE id=?", (material_id,)).fetchone()
+                if mrow:
+                    lm.material_id, lm.name = mrow["id"], mrow["name"]
+            elif name is not None and name.strip() and name.strip() != lm.name:
+                mat = self._find_or_create_material(name)
+                lm.material_id, lm.name = mat.id, mat.name
+            self._conn.execute("UPDATE line_materials SET material_id=?, name=?, quantity=?, unit=? WHERE id=?",
+                               (lm.material_id, lm.name, lm.quantity, lm.unit, lm.id))
+            self._conn.commit()
+        return lm
+
+    def delete_line_material(self, lm_id: str) -> bool:
+        with self._lock:
+            cur = self._conn.execute("DELETE FROM line_materials WHERE id=?", (lm_id,))
+            self._conn.commit()
+            return cur.rowcount > 0
 
     # ---------- оборудование (онтология линии) ----------
     def list_equipment(self, line_id: str) -> list[Equipment]:
@@ -160,6 +342,35 @@ class Store:
                 (eq.id, eq.line_id, eq.name, eq.position, eq.category, eq.status))
             self._conn.commit()
         return eq
+
+    def update_equipment(self, eq_id: str, name: str | None = None, position: str | None = None,
+                         category: str | None = None, status: str | None = None) -> Equipment | None:
+        with self._lock:
+            row = self._conn.execute("SELECT * FROM equipment WHERE id=?", (eq_id,)).fetchone()
+            if not row:
+                return None
+            eq = Equipment(id=row["id"], line_id=row["line_id"], name=row["name"],
+                          position=row["position"] or "", category=row["category"] or "",
+                          status=row["status"] or "в эксплуатации")
+            if name is not None:
+                eq.name = name
+            if position is not None:
+                eq.position = position
+            if category is not None:
+                eq.category = category
+            if status is not None:
+                eq.status = status
+            self._conn.execute(
+                "UPDATE equipment SET name=?, position=?, category=?, status=? WHERE id=?",
+                (eq.name, eq.position, eq.category, eq.status, eq.id))
+            self._conn.commit()
+        return eq
+
+    def delete_equipment(self, eq_id: str) -> bool:
+        with self._lock:
+            cur = self._conn.execute("DELETE FROM equipment WHERE id=?", (eq_id,))
+            self._conn.commit()
+            return cur.rowcount > 0
 
     # ---------- отчёты ----------
     def save_reports(self, project_id: str, source: str, reports: list[TailingsReport],

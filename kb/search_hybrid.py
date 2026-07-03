@@ -47,17 +47,26 @@ DENSE_WEIGHT = 2.0
 
 
 def search(query: str, k: int = 5, embedder=None, dense_only: bool = False,
-           dense_weight: float = DENSE_WEIGHT) -> list[dict]:
-    """Взвешенное RRF-слияние BM25 и dense. embedder — из kb.embedder_base.get_embedder()."""
+           dense_weight: float = DENSE_WEIGHT,
+           exclude_types: frozenset[str] | set[str] = frozenset()) -> list[dict]:
+    """Взвешенное RRF-слияние BM25 и dense. embedder — из kb.embedder_base.get_embedder().
+
+    exclude_types — доменный фильтр по метаданному type чанка: для Cu-Ni-контекста
+    передавайте {"book_gold"}, иначе золотая книга Лодейщикова шумит в выдаче.
+    """
     chunks, bm25, token_sets, by_id, col = _load()
     ranks: dict[str, float] = {}
     bm_score: dict[str, float] = {}
     dense_dist: dict[str, float] = {}
 
+    def allowed(cid: str) -> bool:
+        return by_id[cid].get("type", "") not in exclude_types
+
     if not dense_only:
         q_tokens = set(tokenize(query))
         scores = bm25.get_scores(tokenize(query))
-        cand = [i for i in range(len(chunks)) if token_sets[i] & q_tokens]
+        cand = [i for i in range(len(chunks))
+                if token_sets[i] & q_tokens and allowed(chunks[i]["chunk_id"])]
         for rank, i in enumerate(sorted(cand, key=lambda i: -scores[i])[:CAND]):
             cid = chunks[i]["chunk_id"]
             ranks[cid] = ranks.get(cid, 0) + 1.0 / (RRF_K + rank + 1)
@@ -66,8 +75,9 @@ def search(query: str, k: int = 5, embedder=None, dense_only: bool = False,
     if embedder is None:
         from .embedder_base import get_embedder
         embedder = get_embedder("yandex")
+    where = {"type": {"$nin": sorted(exclude_types)}} if exclude_types else None
     got = col.query(query_embeddings=[embedder.embed_query(query)],
-                    n_results=min(CAND, col.count()), include=["distances"])
+                    n_results=min(CAND, col.count()), include=["distances"], where=where)
     for rank, (cid, dist) in enumerate(zip(got["ids"][0], got["distances"][0])):
         if cid in by_id:  # индекс и chunks.jsonl могли разъехаться
             ranks[cid] = ranks.get(cid, 0) + dense_weight / (RRF_K + rank + 1)

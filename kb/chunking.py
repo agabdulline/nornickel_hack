@@ -23,6 +23,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 BOOKS_DIR = ROOT / "data" / "kb" / "books"
 EXTRA_DIR = ROOT / "data" / "kb" / "extra"
+OCR_DIR = ROOT / "data" / "kb" / "ocr"      # *.pages.jsonl из scripts/ocr_scan_book.py
 SOURCES_CSV = ROOT / "data" / "kb" / "sources.csv"
 CHUNKS_JSONL = ROOT / "data" / "kb" / "chunks.jsonl"
 
@@ -69,7 +70,8 @@ BOOKS_META = {
         "type": "book"},
     "geokniga_lodeyshchikovvvtehnologiyaizvlecheniyazolotaiserebraizupornyh1": {
         "author": "В.В. Лодейщиков", "year": "1999",
-        "title": "Технология извлечения золота и серебра из упорных руд", "type": "book"},
+        "title": "Технология извлечения золота и серебра из упорных руд",
+        "type": "book_gold"},  # непрофильный для Cu-Ni домен — помечаем для фильтрации
     "tehnologiya_izvlecheniya_zolota_i_serebra_iz_upornogo_zolotosoderzhaschego": {
         "author": "—", "year": "",
         "title": "Технология извлечения золота и серебра из упорного золотосодержащего сырья",
@@ -217,6 +219,17 @@ def load_txt(path: Path) -> list[tuple[int | None, str]]:
     return [(None, normalize_text(path.read_text(encoding="utf-8", errors="replace")))]
 
 
+def load_ocr_jsonl(path: Path) -> list[tuple[int | None, str]]:
+    """Постраничный OCR-результат Vision (scripts/ocr_scan_book.py)."""
+    pages = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if line.strip():
+            rec = json.loads(line)
+            pages.append((rec["page"], normalize_text(rec["text"])))
+    pages.sort(key=lambda p: p[0])
+    return pages
+
+
 def load_sources_meta() -> dict[str, dict]:
     meta: dict[str, dict] = {}
     if SOURCES_CSV.exists():
@@ -239,14 +252,18 @@ def chunk_corpus(dirs: list[Path] | None = None) -> tuple[list[Chunk], dict[str,
     sources = load_sources_meta()
     all_chunks: list[Chunk] = []
     per_doc: dict[str, int] = {}
+    ocr_stems = {p.name.replace(".pages.jsonl", "") for p in OCR_DIR.glob("*.pages.jsonl")} \
+        if OCR_DIR.exists() else set()
     for d in dirs:
         for path in sorted(d.glob("*")):
             if path.suffix.lower() not in (".pdf", ".txt"):
                 continue
             if path.suffix.lower() == ".pdf":
+                if path.stem in ocr_stems:
+                    continue  # для скана есть OCR-результат — возьмём его ниже
                 pages = load_pdf(path)
                 if pages is None:
-                    print(f"  SKIP (скан без текста): {path.name}")
+                    print(f"  SKIP (скан без текста, OCR-результата нет): {path.name}")
                     per_doc[path.name] = 0
                     continue
             else:
@@ -254,6 +271,14 @@ def chunk_corpus(dirs: list[Path] | None = None) -> tuple[list[Chunk], dict[str,
             chunks = chunk_document(pages, doc_meta(path, sources), path.name)
             per_doc[path.name] = len(chunks)
             all_chunks.extend(chunks)
+    # OCR-нутые сканы: источник цитат — исходный PDF (имя сохраняем)
+    for jf in sorted(OCR_DIR.glob("*.pages.jsonl")) if OCR_DIR.exists() else []:
+        stem = jf.name.replace(".pages.jsonl", "")
+        source_name = stem + ".pdf"
+        pages = load_ocr_jsonl(jf)
+        chunks = chunk_document(pages, doc_meta(Path(source_name), sources), source_name)
+        per_doc[source_name + " (OCR)"] = len(chunks)
+        all_chunks.extend(chunks)
     return all_chunks, per_doc
 
 

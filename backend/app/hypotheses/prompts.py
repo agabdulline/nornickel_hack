@@ -10,8 +10,12 @@ SYSTEM_GENERATE = """Ты — главный обогатитель научно
 гипотезы по снижению потерь.
 
 Жёсткие правила:
-1. На каждый диагноз — 2–4 гипотезы, суммарно 8–14. Большинство экспертных гипотез — про
-   измельчение и классификацию, флотационные — меньшинство.
+1. На каждый диагноз — 2–4 гипотезы, суммарно 8–14 (если диагнозов мало — всё равно не
+   меньше 10, расширяя охват смежными переделами: дробление, классификация, вспомогательные).
+   Большинство экспертных гипотез — про измельчение и классификацию, флотационные — меньшинство.
+1а. Тебе передан СПИСОК НАПРАВЛЕНИЙ ВМЕШАТЕЛЬСТВ по каждому диагнозу — пройдись по каждому
+   направлению и предложи гипотезу, если оно уместно для этих данных и этой фабрики.
+   Разные направления НЕ склеивай в одну гипотезу (футеровка и шаровая загрузка — две разные).
 2. Каждая гипотеза конкретна: какой агрегат/параметр менять, на сколько, что это даст физически.
 3. Цитаты — СТРОГО из переданных фрагментов литературы, с их chunk_id. Цитата — дословный
    фрагмент текста чанка, не длиннее 40 слов. Выдумывать цитаты и chunk_id НЕЛЬЗЯ.
@@ -50,7 +54,8 @@ RESPONSE_SCHEMA_HINT = {
 
 def build_user_prompt(report_summary: dict, diagnoses: list[dict], chunks: list[dict],
                       equipment: list[dict], constraints: str, stoplist: list[str],
-                      history_titles: list[str], excluded_areas: list[str]) -> str:
+                      history_titles: list[str], excluded_areas: list[str],
+                      intervention_menu: dict | None = None) -> str:
     chunk_lines = "\n\n".join(
         f"[{c['chunk_id']}] ({c['source']}, с. {c['page']}):\n{c['text'][:1200]}"
         for c in chunks) or "(фрагментов нет — генерируй без цитат, поле citations пустое)"
@@ -64,6 +69,16 @@ def build_user_prompt(report_summary: dict, diagnoses: list[dict], chunks: list[
         f"ФРАГМЕНТЫ ЛИТЕРАТУРЫ ДЛЯ ЦИТАТ:\n{chunk_lines}",
         f"ОБОРУДОВАНИЕ ФАБРИКИ (онтология):\n{eq_lines}",
     ]
+    if intervention_menu:
+        fired = {d.get("rule_id") for d in diagnoses}
+        menu_lines = []
+        for rule, directions in intervention_menu.items():
+            if rule in fired:
+                menu_lines.append(f"{rule}:")
+                menu_lines += [f"  - {x}" for x in directions]
+        if menu_lines:
+            parts.append("НАПРАВЛЕНИЯ ВМЕШАТЕЛЬСТВ (пройдись по каждому, предложи гипотезу, "
+                         "если уместно для этих данных):\n" + "\n".join(menu_lines))
     if constraints:
         parts.append(f"ОГРАНИЧЕНИЯ ПОЛЬЗОВАТЕЛЯ: {constraints}")
     if excluded_areas:

@@ -82,7 +82,8 @@ def generate_hypotheses(report: TailingsReport, diag: DiagnosticsResult, *,
         } for d in diag.diagnoses]
         prompt = build_user_prompt(report_summary(report), diagnoses_payload, chunks,
                                    equipment_list(), constraints, stoplist,
-                                   history_titles, excluded_areas)
+                                   history_titles, excluded_areas,
+                                   intervention_menu=pack().get("intervention_menu"))
         try:
             resp = llm.chat([{"role": "system", "content": SYSTEM_GENERATE},
                              {"role": "user", "content": prompt}],

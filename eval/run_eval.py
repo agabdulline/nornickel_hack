@@ -127,7 +127,8 @@ def eval_example(name: str, xlsx_re: str, docx_re: str, llm: LLMClient, live: bo
     hyps = generate_hypotheses(report, diag, kb_index=kb,
                                llm=llm if live else _NoLLM(),
                                flowsheet_summary=summarize_for_prompt(factory),
-                               reagent_hints=zero_reagent_hints(factory, kb_index=kb))
+                               reagent_hints=zero_reagent_hints(factory, kb_index=kb),
+                               n_samples=2 if live else 1)
     vstats = verify_citations(hyps, kb)
     out["generated"] = len(hyps)
     out["citation_validity"] = vstats["validity"]

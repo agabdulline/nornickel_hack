@@ -57,3 +57,68 @@ def parse_expert_hypotheses(source, source_name: str = "") -> list[dict]:
         })
     items.sort(key=lambda x: x["n"])
     return items
+
+
+# --- эталонные гипотезы по фабрикам (для novelty-бейджа и few-shot) ---
+
+_PLANT_PATTERNS = {
+    "КГМК": "кгмк",
+    "НОФ вкр": "ноф вкр",
+    "НОФ мед": "ноф мед",
+    "ТОФ": "тоф",
+}
+
+
+def _find_expert_docx(pattern: str):
+    import os
+    import unicodedata
+    from ..config import DATA_CASE
+    if not DATA_CASE.exists():
+        return None
+    for root, _dirs, files in os.walk(DATA_CASE):
+        for f in files:
+            nf = unicodedata.normalize("NFC", f).lower()
+            if nf.startswith("гипотезы") and nf.endswith(".docx") \
+                    and pattern in nf.replace("_", " "):
+                return f"{root}/{f}"
+    return None
+
+
+def expert_titles_for_plant(plant: str) -> list[str]:
+    """Эталонные гипотезы экспертов ЭТОЙ фабрики (novelty / бейдж совпадения)."""
+    low = (plant or "").lower()
+    key = ("КГМК" if "кгмк" in low else
+           "НОФ вкр" if "вкрапл" in low else
+           "НОФ мед" if "мед" in low else
+           "ТОФ" if "тоф" in low else None)
+    if not key:
+        return []
+    path = _find_expert_docx(_PLANT_PATTERNS[key])
+    if not path:
+        return []
+    try:
+        return [x["title"] for x in parse_expert_hypotheses(path)]
+    except Exception:  # noqa: BLE001 — отсутствие эталонов не должно ронять пайплайн
+        return []
+
+
+def cross_plant_examples(plant: str, per_plant: int = 2) -> list[str]:
+    """Гипотезы экспертов ДРУГИХ фабрик — few-shot образец конкретности для
+    генератора. Эталоны текущей фабрики исключаются (никакого лика ground truth)."""
+    low = (plant or "").lower()
+    current = ("КГМК" if "кгмк" in low else
+               "НОФ" if ("ноф" in low or "вкрапл" in low or "мед" in low or "норильск" in low)
+               else "ТОФ" if ("тоф" in low or "талнах" in low) else None)
+    out: list[str] = []
+    for key, pattern in _PLANT_PATTERNS.items():
+        if current and key.startswith(current):
+            continue
+        path = _find_expert_docx(pattern)
+        if not path:
+            continue
+        try:
+            items = parse_expert_hypotheses(path)
+        except Exception:  # noqa: BLE001
+            continue
+        out.extend(x["title"] for x in items[:per_plant])
+    return out[:6]

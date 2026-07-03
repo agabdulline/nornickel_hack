@@ -227,7 +227,8 @@ def generate(pid: str, body: GenerateIn, store: Store = Depends(get_store),
         constraints=project.constraints, stoplist=project.stoplist,
         history_titles=history, excluded_areas=body.excluded_areas,
         flowsheet_summary=summarize_for_prompt(factory),
-        reagent_hints=zero_reagent_hints(factory, kb_index=kb))
+        reagent_hints=zero_reagent_hints(factory, kb_index=kb),
+        n_samples=2)  # best-of-2: параллельные сэмплы + смысловой дедуп
     verify_citations(hyps, kb)
     prior = expert_titles_for_plant(report.plant) + \
         [h.title for h in store.get_hypotheses(pid, statuses=["accepted"])]
@@ -266,30 +267,7 @@ def feedback(hid: str, body: FeedbackIn, store: Store = Depends(get_store)) -> d
     return {"id": hid, "status": h.status, "stoplist": project.stoplist}
 
 
-def expert_titles_for_plant(plant: str) -> list[str]:
-    """Эталонные гипотезы экспертов для novelty/бейджа (если данные кейса рядом)."""
-    from .config import DATA_CASE
-    import os, re
-    if not DATA_CASE.exists():
-        return []
-    low = plant.lower()
-    pattern = ("кгмк" if "кгмк" in low else
-               "ноф вкр" if "вкрапл" in low else
-               "ноф мед" if "мед" in low else
-               "тоф" if "тоф" in low else None)
-    if not pattern:
-        return []
-    for root, _dirs, files in os.walk(DATA_CASE):
-        for f in files:
-            nf = unicodedata.normalize("NFC", f).lower()
-            if nf.startswith("гипотезы") and nf.endswith(".docx"):
-                if re.sub(r"\s+", " ", pattern) in nf.replace("_", " "):
-                    try:
-                        items = parse_expert_hypotheses(os.path.join(root, f))
-                        return [x["title"] for x in items]
-                    except Exception:  # noqa: BLE001
-                        return []
-    return []
+from .parser.docx import expert_titles_for_plant  # noqa: E402 — используется в generate()
 
 
 # ---------- чат-интерпретатор (8.1) ----------

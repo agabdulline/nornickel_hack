@@ -66,7 +66,10 @@ def generate_hypotheses(report: TailingsReport, diag: DiagnosticsResult, *,
                         history_titles: list[str] | None = None,
                         excluded_areas: list[str] | None = None,
                         flowsheet_summary: dict | None = None,
-                        reagent_hints: list[dict] | None = None) -> list[Hypothesis]:
+                        reagent_hints: list[dict] | None = None,
+                        n_samples: int = 1) -> list[Hypothesis]:
+    """n_samples > 1 — best-of-N: параллельные независимые генерации, объединение
+    и смысловой дедуп (LLM недобирает направления в одиночном сэмпле)."""
     kb_index = kb_index if kb_index is not None else default_index()
     llm = llm if llm is not None else default_client
     stoplist = stoplist or []
@@ -75,36 +78,106 @@ def generate_hypotheses(report: TailingsReport, diag: DiagnosticsResult, *,
 
     chunks = search_multi(build_queries(diag), k_total=10, index=kb_index) if diag.diagnoses else []
 
-    raw = None
+    raws: list[dict] = []
     if getattr(llm, "enabled", False):
         diagnoses_payload = [{
             "rule_id": d.rule_id, "element": d.element, "zone": d.zone, "text": d.text,
             "inputs": d.inputs, "target_cells": d.cell_keys,
             "tonnes_recoverable": d.tonnes_recoverable, "uncertain": d.uncertain,
         } for d in diag.diagnoses]
+        from ..parser.docx import cross_plant_examples
         prompt = build_user_prompt(report_summary(report), diagnoses_payload, chunks,
                                    equipment_list(), constraints, stoplist,
                                    history_titles, excluded_areas,
                                    intervention_menu=pack().get("intervention_menu"),
                                    flowsheet_summary=flowsheet_summary,
-                                   reagent_hints=reagent_hints)
-        try:
-            resp = llm.chat([{"role": "system", "content": SYSTEM_GENERATE},
-                             {"role": "user", "content": prompt}],
-                            strong=True, json_mode=True)
-            raw = extract_json(resp["content"])
-        except (LLMUnavailable, ValueError) as e:
-            log.warning("Генерация LLM недоступна (%s) — мок из фикстуры", e)
+                                   reagent_hints=reagent_hints,
+                                   few_shot=cross_plant_examples(report.plant))
+
+        def one_sample(_i: int) -> dict | None:
+            try:
+                resp = llm.chat([{"role": "system", "content": SYSTEM_GENERATE},
+                                 {"role": "user", "content": prompt}],
+                                strong=True, json_mode=True)
+                data = extract_json(resp["content"])
+                if isinstance(data, list):  # модель вернула голый массив гипотез
+                    data = {"hypotheses": data}
+                return data if isinstance(data, dict) else None
+            except (LLMUnavailable, ValueError) as e:
+                log.warning("Сэмпл генерации не удался (%s)", e)
+                return None
+
+        if n_samples <= 1:
+            raws = [r for r in [one_sample(0)] if r]
+        else:
+            from concurrent.futures import ThreadPoolExecutor
+            with ThreadPoolExecutor(max_workers=n_samples) as pool:
+                raws = [r for r in pool.map(one_sample, range(n_samples)) if r]
 
     grounded_mock = False
-    if raw is None:
-        raw = json.loads(MOCK_FIXTURE.read_text(encoding="utf-8"))
+    if not raws:
+        raws = [json.loads(MOCK_FIXTURE.read_text(encoding="utf-8"))]
         grounded_mock = True
 
-    hyps = _postprocess(raw, report, diag, stoplist, excluded_areas)
+    hyps: list[Hypothesis] = []
+    for raw in raws:
+        hyps.extend(_postprocess(raw, report, diag, stoplist, excluded_areas))
+    hyps = _dedup_hypotheses(hyps)[:15]  # после best-of-N не раздуваем выдачу
+
     if grounded_mock:
         _ground_mock_citations(hyps, kb_index)
+    else:
+        _reground_citations(hyps, kb_index)
     return hyps
+
+
+def _dedup_hypotheses(hyps: list[Hypothesis]) -> list[Hypothesis]:
+    """Смысловой дедуп после best-of-N: похожие заголовки (fuzzy) = одно
+    вмешательство; остаётся более проработанная карточка."""
+    from rapidfuzz import fuzz
+
+    def richness(h: Hypothesis) -> tuple:
+        return (len(h.rationale), len(h.verification_plan), h.effect.tonnes_max,
+                len(h.mechanism))
+
+    kept: list[Hypothesis] = []
+    for h in sorted(hyps, key=richness, reverse=True):
+        dup = any(fuzz.token_set_ratio(h.title.lower(), k.title.lower()) > 78
+                  and h.element == k.element for k in kept)
+        if not dup:
+            kept.append(h)
+    return kept
+
+
+def _reground_citations(hyps: list[Hypothesis], kb_index: KBIndex):
+    """Пере-заземление цитат живой генерации: цитата, которая не пройдёт verify
+    (нет чанка / текст не совпадает), заменяется дословным фрагментом лучшего
+    чанка ПОД ЭТУ гипотезу. Гипотеза без цитат получает одну."""
+    import re as _re
+    from rapidfuzz import fuzz
+
+    def norm(s: str) -> str:
+        return _re.sub(r"\s+", " ", (s or "").lower()).strip()
+
+    for h in hyps:
+        good = []
+        for cit in h.rationale:
+            chunk = kb_index.get_chunk(cit.chunk_id) if cit.chunk_id else None
+            if chunk and fuzz.partial_ratio(norm(cit.quote), norm(chunk["text"])) > 75:
+                good.append(cit)
+        target = min(max(len(h.rationale), 1), 2)
+        if len(good) >= target:
+            h.rationale = good
+            continue  # валидных цитат достаточно — не трогаем
+        for hit in kb_index.search(f"{h.title} {h.mechanism}", k=3):
+            if len(good) >= target:
+                break
+            if any(c.chunk_id == hit["chunk_id"] for c in good):
+                continue
+            quote = " ".join(hit["text"].split()[:35])
+            good.append(Citation(quote=quote, source=hit["source"],
+                                 page=hit["page"], chunk_id=hit["chunk_id"]))
+        h.rationale = good
 
 
 def _postprocess(raw: dict, report: TailingsReport, diag: DiagnosticsResult,

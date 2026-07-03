@@ -2,7 +2,29 @@ import { useEffect, useRef, useState } from 'react'
 import { api } from '../api'
 import type { Equipment, Line, LineKind, LineMaterial, Material, MaterialUnit } from '../types'
 
-const UNITS: MaterialUnit[] = ['т', 'кг', '%', 'м³']
+const STANDARD_UNITS = ['т', 'кг', 'г', 'мг', 'м³', 'л', 'мл', '%', 'ppm', 'моль', 'ммоль', 'г/т']
+const CUSTOM_UNIT = '__custom__'
+
+/** Select со стандартными единицами + «своя единица…»: при выборе последней
+ * (или когда текущее значение уже не входит в стандартный список) рядом
+ * появляется обычное текстовое поле для произвольной единицы. */
+function UnitField({ value, onChange }: { value: MaterialUnit; onChange: (v: string) => void }) {
+  const isCustom = !STANDARD_UNITS.includes(value)
+  return (
+    <>
+      <select className="w-24 border border-slate-300 rounded px-2 py-1 text-sm"
+        value={isCustom ? CUSTOM_UNIT : value}
+        onChange={e => onChange(e.target.value === CUSTOM_UNIT ? '' : e.target.value)}>
+        {STANDARD_UNITS.map(u => <option key={u} value={u}>{u}</option>)}
+        <option value={CUSTOM_UNIT}>своя единица…</option>
+      </select>
+      {isCustom && (
+        <input className="w-24 border border-slate-300 rounded px-2 py-1 text-sm placeholder:text-slate-400"
+          placeholder="напр.: усл.ед." value={value} onChange={e => onChange(e.target.value)} autoFocus />
+      )}
+    </>
+  )
+}
 
 /** Псевдо-линия «без привязки к объекту» — не сущность в БД, только состояние
  * выбора в форме проекта. Пока она выбрана, ограничения по оборудованию/сырью
@@ -191,7 +213,7 @@ export function EquipmentEditor({ lineId, value, onChange }: {
 
   return (
     <div>
-      <div className="text-xs text-slate-500 mb-1">Оборудование линии</div>
+      <div className="text-xs text-slate-500 mb-1">Оборудование объекта</div>
       {value.length === 0 && (
         <div className="text-sm text-slate-400 mb-1">
           Оборудование не указано — добавьте его ниже, чтобы гипотезы проверялись на соответствие.
@@ -312,7 +334,7 @@ export function MaterialsEditor({ lineId, value, onChange }: {
     <div>
       <div className="text-xs text-slate-500 mb-1">Сырьё</div>
       {value.length === 0 && (
-        <div className="text-sm text-slate-400 mb-1">На этой линии сырьё ещё не заведено.</div>
+        <div className="text-sm text-slate-400 mb-1">Сырьё для этого объекта ещё не заведено.</div>
       )}
       {value.length > 0 && (
         <div className="flex flex-wrap gap-1.5 mb-2">
@@ -332,10 +354,7 @@ export function MaterialsEditor({ lineId, value, onChange }: {
         <input type="number" min={0} className="w-24 border border-slate-300 rounded px-2 py-1 text-sm placeholder:text-slate-400"
           placeholder="напр.: 1200" value={form.quantity}
           onChange={e => setForm({ ...form, quantity: e.target.value })} />
-        <select className="w-20 border border-slate-300 rounded px-2 py-1 text-sm"
-          value={form.unit} onChange={e => setForm({ ...form, unit: e.target.value as MaterialUnit })}>
-          {UNITS.map(u => <option key={u} value={u}>{u}</option>)}
-        </select>
+        <UnitField value={form.unit} onChange={unit => setForm({ ...form, unit })} />
         <button type="button" className="btn" disabled={busy || !form.name.trim() || form.quantity === ''}
           onClick={submit}>
           {editingId ? 'Сохранить' : '+ Добавить'}
@@ -377,7 +396,7 @@ export function EquipmentRows({ rows, onChange }: {
 
   return (
     <div>
-      <div className="text-xs text-slate-500 mb-1">Оборудование линии</div>
+      <div className="text-xs text-slate-500 mb-1">Оборудование объекта</div>
       {rows.length === 0 && (
         <div className="text-sm text-slate-400 mb-1">
           Оборудование не указано — добавьте его ниже, чтобы гипотезы проверялись на соответствие.
@@ -435,7 +454,7 @@ export function MaterialRows({ rows, onChange, catalog }: {
     <div>
       <div className="text-xs text-slate-500 mb-1">Сырьё</div>
       {rows.length === 0 && (
-        <div className="text-sm text-slate-400 mb-1">На этой линии сырьё ещё не заведено.</div>
+        <div className="text-sm text-slate-400 mb-1">Сырьё для этого объекта ещё не заведено.</div>
       )}
       <div className="space-y-1.5">
         {rows.map(r => (
@@ -444,10 +463,7 @@ export function MaterialRows({ rows, onChange, catalog }: {
             <input type="number" min={0} className="w-24 border border-slate-300 rounded px-2 py-1 text-sm placeholder:text-slate-400"
               placeholder="напр.: 1200"
               value={r.quantity} onChange={e => updateRow(r.id, { quantity: e.target.value })} />
-            <select className="w-20 border border-slate-300 rounded px-2 py-1 text-sm"
-              value={r.unit} onChange={e => updateRow(r.id, { unit: e.target.value as MaterialUnit })}>
-              {UNITS.map(u => <option key={u} value={u}>{u}</option>)}
-            </select>
+            <UnitField value={r.unit} onChange={unit => updateRow(r.id, { unit })} />
             <button type="button" className="text-slate-400 hover:text-red-600 px-1"
               onClick={() => removeRow(r.id)}>✕</button>
           </div>
@@ -458,10 +474,7 @@ export function MaterialRows({ rows, onChange, catalog }: {
         <input type="number" min={0} className="w-24 border border-slate-300 rounded px-2 py-1 text-sm placeholder:text-slate-400"
           placeholder="напр.: 1200"
           value={addForm.quantity} onChange={e => setAddForm({ ...addForm, quantity: e.target.value })} />
-        <select className="w-20 border border-slate-300 rounded px-2 py-1 text-sm"
-          value={addForm.unit} onChange={e => setAddForm({ ...addForm, unit: e.target.value as MaterialUnit })}>
-          {UNITS.map(u => <option key={u} value={u}>{u}</option>)}
-        </select>
+        <UnitField value={addForm.unit} onChange={unit => setAddForm({ ...addForm, unit })} />
         <button type="button" className="btn" disabled={!addForm.name.trim() || addForm.quantity === ''}
           onClick={addRow}>+ Добавить</button>
       </div>

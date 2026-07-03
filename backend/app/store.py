@@ -97,6 +97,10 @@ _SEED_MATERIALS: dict[str, list[dict]] = {
     ],
 }
 
+# справочник материалов — не привязан к конкретной линии/лаборатории, доступен
+# как вариант для любого объекта; реальные типы руд компании помимо вкрапленной
+_SEED_MATERIALS_CATALOG = ["Вкрапленная руда", "Медистая руда", "Богатая руда"]
+
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
@@ -120,6 +124,7 @@ class Store:
         self._seed_equipment()
         self._seed_lines()
         self._seed_materials()
+        self._seed_materials_catalog()
         self._conn.commit()
 
     def _migrate_project_constraints(self):
@@ -181,6 +186,15 @@ class Store:
                     "INSERT INTO line_materials VALUES (?,?,?,?,?,?)",
                     (uuid.uuid4().hex[:10], line_id, mat.id, mat.name,
                      item["quantity"], item["unit"]))
+
+    def _seed_materials_catalog(self):
+        """Справочник материалов, доступный для ЛЮБОГО объекта — не привязан к
+        конкретной линии/лаборатории, поэтому идёт отдельно от _seed_materials
+        (которая сидирует остатки СЫРЬЯ на конкретной линии и всё-или-ничего
+        по line_materials). find_or_create_material идемпотентен по имени —
+        безопасно вызывать при каждом старте."""
+        for name in _SEED_MATERIALS_CATALOG:
+            self._find_or_create_material(name)
 
     # ---------- проекты ----------
     def create_project(self, plant: str, goal: str = "", constraints: str = "",

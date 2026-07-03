@@ -12,14 +12,8 @@ import Hypotheses from './screens/Hypotheses'
 import ExportScreen from './screens/Export'
 import KB from './screens/KB'
 
-const REGULATORY_OPTIONS: { key: string; label: string }[] = [
-  { key: 'ecology', label: 'Экологические нормы' },
-  { key: 'industrial_safety', label: 'Промышленная безопасность' },
-  { key: 'sector_standard', label: 'Отраслевой стандарт' },
-]
-
 function emptyConstraints(): ProjectConstraints {
-  return { equipment: [], materials: [], regulatory: [], regulatory_notes: '' }
+  return { equipment: [], materials: [] }
 }
 
 /** Название проекта по умолчанию: "{линия} · QN YYYY". */
@@ -54,11 +48,6 @@ function ConstraintsSection({ line, value, onChange }: {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [line.id, noObject])
 
-  const toggleRegulatory = (key: string) => {
-    const has = value.regulatory.includes(key)
-    onChange({ ...value, regulatory: has ? value.regulatory.filter(k => k !== key) : [...value.regulatory, key] })
-  }
-
   return (
     <div className="space-y-3 pt-3 border-t border-slate-100">
       <h3 className="font-semibold text-sm text-slate-700">Ограничения</h3>
@@ -76,23 +65,6 @@ function ConstraintsSection({ line, value, onChange }: {
             onChange={materials => onChange({ ...value, materials })} />
         </>
       )}
-
-      {/* нормативка — не зависит от привязки к объекту */}
-      <div>
-        <div className="text-xs text-slate-500 mb-1">Нормативные требования</div>
-        <div className="flex flex-wrap gap-3 mb-2">
-          {REGULATORY_OPTIONS.map(o => (
-            <label key={o.key} className="flex items-center gap-1.5 text-sm">
-              <input type="checkbox" checked={value.regulatory.includes(o.key)}
-                onChange={() => toggleRegulatory(o.key)} />
-              {o.label}
-            </label>
-          ))}
-        </div>
-        <input className="w-full border border-slate-300 rounded px-2 py-1.5 text-sm placeholder:text-slate-400"
-          placeholder="напр.: требуется согласование с Ростехнадзором" value={value.regulatory_notes}
-          onChange={e => onChange({ ...value, regulatory_notes: e.target.value })} />
-      </div>
     </div>
   )
 }

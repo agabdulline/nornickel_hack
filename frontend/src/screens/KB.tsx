@@ -172,7 +172,7 @@ function LinesSection() {
                   ) : (
                     <>
                       <div>
-                        <div className="text-xs text-slate-500 mb-1">Оборудование линии</div>
+                        <div className="text-xs text-slate-500 mb-1">Оборудование объекта</div>
                         {equipment.length === 0 && (
                           <div className="text-sm text-slate-400">
                             Оборудование не указано — добавьте его через «Изменить».
@@ -189,7 +189,7 @@ function LinesSection() {
                       <div>
                         <div className="text-xs text-slate-500 mb-1">Сырьё</div>
                         {materials.length === 0 && (
-                          <div className="text-sm text-slate-400">На этой линии сырьё ещё не заведено.</div>
+                          <div className="text-sm text-slate-400">Сырьё для этого объекта ещё не заведено.</div>
                         )}
                         <div className="flex flex-wrap gap-1.5">
                           {materials.map(m => (

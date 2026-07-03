@@ -15,7 +15,9 @@ export interface Material {
   id: string; name: string;
 }
 
-export type MaterialUnit = 'т' | 'кг' | '%' | 'м³';
+// свободная строка — стандартный список предлагается в UI (см. STANDARD_UNITS
+// в components/lines.tsx), но «своя единица…» допускает произвольный текст
+export type MaterialUnit = string;
 
 export interface LineMaterial {
   id: string; line_id: string; material_id: string; name: string;
@@ -25,8 +27,6 @@ export interface LineMaterial {
 export interface ProjectConstraints {
   equipment: Equipment[];
   materials: LineMaterial[];
-  regulatory: string[];
-  regulatory_notes: string;
 }
 
 export interface Project {

@@ -149,13 +149,18 @@ class Material(BaseModel):
 
 
 class LineMaterial(BaseModel):
-    """Остаток сырья на линии (см. пункт 3 ТЗ по мастер-данным)."""
+    """Остаток сырья на линии (см. пункт 3 ТЗ по мастер-данным).
+
+    unit — свободная строка, не Literal: стандартный список предлагается на
+    фронте (т/кг/г/мг/м³/л/мл/%/ppm/моль/ммоль/г/т), но «своя единица…»
+    позволяет ввести произвольную.
+    """
     id: str
     line_id: str
     material_id: str
     name: str
     quantity: float = 0.0
-    unit: Literal["т", "кг", "%", "м³"] = "т"
+    unit: str = "т"
 
 
 class Effect(BaseModel):
@@ -224,11 +229,13 @@ class ProjectConstraints(BaseModel):
     equipment/materials — НЕ снимок: это всегда live-данные линии (см.
     Store.constraints_for_project), правки в них пишутся напрямую в мастер-данные
     линии (write-through), отдельного слепка на момент создания проекта нет.
+
+    Нормативные требования (регуляторная чувствительность) сюда сознательно не
+    включены — отложенная фича, к ней вернутся отдельно; недоделанный UI хуже,
+    чем его отсутствие.
     """
     equipment: list[Equipment] = Field(default_factory=list)
     materials: list[LineMaterial] = Field(default_factory=list)
-    regulatory: list[str] = Field(default_factory=list)        # напр. ["ecology", "industrial_safety", "sector_standard"]
-    regulatory_notes: str = ""
 
 
 class Project(BaseModel):

@@ -24,7 +24,9 @@ DOCX/CSV/JSON и чат-интерпретатор.
 # 1. зависимости (requirements-ml.txt опционален: без него KB работает на BM25)
 pip install -r requirements.txt -r requirements-ml.txt && cd frontend && npm install && cd ..
 
-# 2. конфиг LLM: скопируйте шаблон и впишите ключ (без ключа всё работает на моках)
+# 2. конфиг LLM: скопируйте шаблон и впишите ключ (без ключа всё работает на моках).
+#    Рекомендуемый эндпоинт — Yandex AI Studio (deepseek-v4-flash), см. .env.example;
+#    подойдёт любой OpenAI-совместимый.
 cp .env.example .env
 
 # 3. два процесса
@@ -105,6 +107,23 @@ docx (эталоны) ──► eval/run_eval.py     diagnostics.py (R1–R5, б
 - Без `LLM_API_KEY` весь пайплайн работает, генерация отдаёт мок-фикстуру с цитатами, заземлёнными на локальный индекс.
 - Метки классов/минералов нормализуются по числам и словарю синонимов — «+71», « -20 + 10», «Пирит/Другие Элемент 29 сульфиды» парсятся одинаково во всех 4 файлах.
 - ТОФ: разбираются обе разновидности хвостов (породные + пирротиновые) и общий блок, Факт/Расчёт — в метаданных.
+
+## Расширенный корпус базы знаний (kb/)
+
+Отдельный конвейер для сборки большого корпуса и индекса на эмбеддингах Yandex
+(коллекция `kb_yandex_v2`, chromadb в `chroma/`, dim=256, асимметричные модели
+text-search-doc/query):
+
+```bash
+python scripts/fetch_kb_sources.py    # скачивание источников по kb_extra_sources.xlsx -> data/kb/extra
+python kb/chunking.py                 # чанкование books+extra (~500 ток., ремонт битых кодировок ГИАБ-PDF)
+python scripts/smoke_yandex_embed.py  # разведка API эмбеддингов (эндпоинт/модели/лимиты)
+python scripts/index_kb_yandex.py     # индексация (есть --resume); троттлинг 9 RPS
+python scripts/check_kb_yandex.py     # 12 контрольных вопросов -> eval/yandex_embed_check.md
+```
+
+Интерфейс эмбеддеров — `kb/embedder_base.py` (`EMBED_PROVIDER=yandex`; `local` —
+заглушка под реализацию на другой машине, сигнатуры не менять).
 
 ## API (основное)
 

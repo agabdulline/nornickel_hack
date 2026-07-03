@@ -163,13 +163,17 @@ def main():
                     help="не делать живых вызовов (генерация из фикстуры, judge fuzzy)")
     ap.add_argument("--no-report", action="store_true",
                     help="не дописывать eval/report.md (для CI/pytest)")
+    ap.add_argument("--only", default="",
+                    help="запятая-список примеров, напр. 'Пример 2,Пример 3'")
     args = ap.parse_args()
     live = not args.mock and settings.has_key
     mode = "live" if live else "mock"
     print(f"=== eval, режим {mode}, модель {settings.llm_model_strong}")
 
+    only = {s.strip() for s in args.only.split(",") if s.strip()}
+    examples = [e for e in EXAMPLES if not only or e[0] in only]
     results = []
-    for name, xlsx_re, docx_re in EXAMPLES:
+    for name, xlsx_re, docx_re in examples:
         print(f"[{name}] ...")
         r = eval_example(name, xlsx_re, docx_re, client, live)
         cov_str = f"{r.get('covered', '?')}/{r.get('expert_total', '?')}"

@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import uuid
 
 from ..config import METAL_PRICE_USD, ROOT
@@ -86,13 +87,16 @@ def generate_hypotheses(report: TailingsReport, diag: DiagnosticsResult, *,
             "tonnes_recoverable": d.tonnes_recoverable, "uncertain": d.uncertain,
         } for d in diag.diagnoses]
         from ..parser.docx import cross_plant_examples
+        # GEN_NO_FEWSHOT=1 — абляционный выключатель для eval-экспериментов
+        few_shot = [] if os.environ.get("GEN_NO_FEWSHOT") == "1" \
+            else cross_plant_examples(report.plant)
         prompt = build_user_prompt(report_summary(report), diagnoses_payload, chunks,
                                    equipment_list(), constraints, stoplist,
                                    history_titles, excluded_areas,
                                    intervention_menu=pack().get("intervention_menu"),
                                    flowsheet_summary=flowsheet_summary,
                                    reagent_hints=reagent_hints,
-                                   few_shot=cross_plant_examples(report.plant))
+                                   few_shot=few_shot)
 
         def one_sample(_i: int) -> dict | None:
             try:
@@ -122,7 +126,14 @@ def generate_hypotheses(report: TailingsReport, diag: DiagnosticsResult, *,
     hyps: list[Hypothesis] = []
     for raw in raws:
         hyps.extend(_postprocess(raw, report, diag, stoplist, excluded_areas))
-    hyps = _dedup_hypotheses(hyps)[:15]  # после best-of-N не раздуваем выдачу
+    hyps = _dedup_hypotheses(hyps)
+
+    if not grounded_mock and os.environ.get("GEN_NO_REPAIR") != "1":
+        extra = _repair_missing_directions(llm, prompt, hyps, report, diag,
+                                           stoplist, excluded_areas)
+        if extra:
+            hyps = _dedup_hypotheses(hyps + extra)
+    hyps = _cap_diverse(hyps, cap=15)
 
     if grounded_mock:
         _ground_mock_citations(hyps, kb_index)
@@ -131,22 +142,93 @@ def generate_hypotheses(report: TailingsReport, diag: DiagnosticsResult, *,
     return hyps
 
 
+def _richness(h: Hypothesis) -> tuple:
+    return (len(h.rationale), len(h.verification_plan), h.effect.tonnes_max,
+            len(h.mechanism))
+
+
 def _dedup_hypotheses(hyps: list[Hypothesis]) -> list[Hypothesis]:
     """Смысловой дедуп после best-of-N: похожие заголовки (fuzzy) = одно
-    вмешательство; остаётся более проработанная карточка."""
+    вмешательство; остаётся более проработанная карточка. Внутри одного
+    hypothesis_type порог ниже: перефразированные варианты одного приёма
+    («грохочение Derrick 71 мкм» / «грохочение сетка 100 мкм») — дубли."""
     from rapidfuzz import fuzz
 
-    def richness(h: Hypothesis) -> tuple:
-        return (len(h.rationale), len(h.verification_plan), h.effect.tonnes_max,
-                len(h.mechanism))
-
     kept: list[Hypothesis] = []
-    for h in sorted(hyps, key=richness, reverse=True):
-        dup = any(fuzz.token_set_ratio(h.title.lower(), k.title.lower()) > 78
-                  and h.element == k.element for k in kept)
+    for h in sorted(hyps, key=_richness, reverse=True):
+        dup = False
+        for k in kept:
+            if h.element != k.element:
+                continue
+            s = fuzz.token_set_ratio(h.title.lower(), k.title.lower())
+            if s > 78 or (s > 65 and h.hypothesis_type == k.hypothesis_type != "other"):
+                dup = True
+                break
         if not dup:
             kept.append(h)
     return kept
+
+
+def _cap_diverse(hyps: list[Hypothesis], cap: int = 15) -> list[Hypothesis]:
+    """Кап выдачи с сохранением разнообразия направлений: не более 2 гипотез на
+    (тип, элемент), чтобы близнецы одного приёма не вытесняли уникальные
+    направления; остаток слотов добирается по богатству карточки."""
+    kept: list[Hypothesis] = []
+    skipped: list[Hypothesis] = []
+    per_group: dict[tuple, int] = {}
+    for h in sorted(hyps, key=_richness, reverse=True):
+        g = (h.hypothesis_type, h.element)
+        if per_group.get(g, 0) >= 2:
+            skipped.append(h)
+            continue
+        kept.append(h)
+        per_group[g] = per_group.get(g, 0) + 1
+    for h in skipped:
+        if len(kept) >= cap:
+            break
+        kept.append(h)
+    return kept[:cap]
+
+
+REPAIR_SUFFIX = """
+
+ДОБОР НЕПОКРЫТЫХ НАПРАВЛЕНИЙ. Уже сгенерированы гипотезы:
+{titles}
+
+Пройди по разделу «НАПРАВЛЕНИЯ ВМЕШАТЕЛЬСТВ» ещё раз. Для каждого направления,
+по которому в списке выше НЕТ гипотезы, добери ровно одну гипотезу, следуя
+направлению ДОСЛОВНО. Направление считается покрытым, только если совпадает
+КОНКРЕТНАЯ операция и агрегат:
+- гипотеза про основную флотацию НЕ покрывает направление про контрольную;
+- ручная настройка НЕ покрывает авторегулирование;
+- доизмельчение в мельнице НЕ покрывает додрабливание в дробилке;
+- если направление содержит несколько приёмов — проверь каждый.
+Направление неприменимо к этим данным — пропусти. Уже покрытые НЕ дублируй.
+Ответ в той же JSON-схеме; если добирать нечего — {{"hypotheses": []}}."""
+
+
+def _repair_missing_directions(llm: LLMClient, base_prompt: str,
+                               hyps: list[Hypothesis], report: TailingsReport,
+                               diag: DiagnosticsResult, stoplist: list[str],
+                               excluded_areas: list[str]) -> list[Hypothesis]:
+    """Гарантия обхода intervention_menu: один добирающий вызов по направлениям,
+    не закрытым основной генерацией (fuzzy их не разделяет — матчит модель)."""
+    titles = "\n".join(f"- {h.title} [{h.element}]" for h in hyps)
+    try:
+        resp = llm.chat([{"role": "system", "content": SYSTEM_GENERATE},
+                         {"role": "user",
+                          "content": base_prompt + REPAIR_SUFFIX.format(titles=titles)}],
+                        strong=True, json_mode=True)
+        data = extract_json(resp["content"])
+        if isinstance(data, list):
+            data = {"hypotheses": data}
+        if isinstance(data, dict):
+            extra = _postprocess(data, report, diag, stoplist, excluded_areas)
+            log.info("Добор непокрытых направлений: +%d гипотез", len(extra))
+            return extra
+    except (LLMUnavailable, ValueError) as e:
+        log.warning("Добор направлений не удался (%s)", e)
+    return []
 
 
 def _reground_citations(hyps: list[Hypothesis], kb_index: KBIndex):

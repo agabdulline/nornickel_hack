@@ -64,3 +64,15 @@ def ingest_pdf(source, filename: str = "", index: KBIndex | None = None) -> dict
     index.add_document(doc_id, filename, pages, chunks, status="indexed")
     log.info("%s: %d стр. -> %d чанков", filename, n_pages, len(chunks))
     return {"status": "indexed", "pages": n_pages, "chunks": len(chunks), "doc_id": doc_id}
+
+
+def ingest_ocr_pages(doc_id: str, filename: str, ocr_pages: list[tuple[int, str]],
+                     index: KBIndex | None = None) -> dict:
+    """Индексация распознанных OCR страниц (скан после Vision)."""
+    index = index or default_index()
+    pages = [(no, normalize_page_text(text)) for no, text in ocr_pages]
+    chunks = chunk_pages(pages)
+    index.add_document(doc_id, filename, pages, chunks, status="indexed_ocr")
+    log.info("%s (OCR): %d стр. -> %d чанков", filename, len(pages), len(chunks))
+    return {"status": "indexed_ocr", "pages": len(pages), "chunks": len(chunks),
+            "doc_id": doc_id}

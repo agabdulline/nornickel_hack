@@ -81,7 +81,10 @@ export interface RoadmapItem {
 export interface ChatReference { type: 'rule' | 'cell' | 'hypothesis' | 'chunk'; id: string }
 export interface ChatAnswer { text: string; references: ChatReference[] }
 
-export interface KbDoc { doc_id: string; source: string; pages: number; chunks: number; status: string }
+export interface KbDoc {
+  doc_id: string; source: string; pages: number; chunks: number; status: string;
+  ocr_done?: number; error?: string;
+}
 export interface KbHit {
   chunk_id: string; text: string; source: string; page: number; score: number;
 }

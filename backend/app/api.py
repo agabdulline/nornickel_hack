@@ -386,7 +386,38 @@ async def kb_upload(file: UploadFile, kb: KBIndex = Depends(get_kb)) -> dict:
     name = unicodedata.normalize("NFC", file.filename or "doc.pdf")
     if not name.lower().endswith(".pdf"):
         raise HTTPException(422, "поддерживаются только PDF")
-    return ingest_pdf(data, filename=name, index=kb)
+    result = ingest_pdf(data, filename=name, index=kb)
+    if result["status"] == "scan_no_text":
+        from .kb import ocr as kb_ocr
+        if kb_ocr.available():
+            _start_background_ocr(data, name, result["doc_id"], result["pages"], kb)
+            kb.set_doc_meta(result["doc_id"], status="ocr_processing",
+                            ocr_done=0, pages=result["pages"])
+            return {**result, "status": "ocr_processing",
+                    "message": "скан без текстового слоя — распознаём Vision OCR, "
+                               "прогресс в списке документов"}
+    return result
+
+
+def _start_background_ocr(data: bytes, name: str, doc_id: str, total: int, kb: KBIndex):
+    """Фоновый поток: Vision OCR постранично -> индексация. Прогресс — в meta документа."""
+    import threading
+    from .kb import ocr as kb_ocr
+    from .kb.ingest import ingest_ocr_pages
+
+    def work():
+        try:
+            def progress(done: int, n: int):
+                if done % 5 == 0 or done == n:
+                    kb.set_doc_meta(doc_id, status="ocr_processing", ocr_done=done, pages=n)
+            pages = kb_ocr.ocr_pdf(data, progress=progress)
+            ingest_ocr_pages(doc_id, name, pages, index=kb)
+            log.info("OCR завершён: %s", name)
+        except Exception as e:  # noqa: BLE001 — статус ошибки должен дойти до UI
+            log.warning("OCR %s упал: %s", name, e)
+            kb.set_doc_meta(doc_id, status="ocr_failed", error=str(e)[:200])
+
+    threading.Thread(target=work, daemon=True, name=f"ocr-{doc_id}").start()
 
 
 @router.get("/kb/documents")

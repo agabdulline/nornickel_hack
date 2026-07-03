@@ -81,7 +81,7 @@ class KBIndex:
                              "chunks": len(chunks), "status": status}
         self._bm25 = None
         self._save()
-        if status == "indexed" and self.use_dense and chunks:
+        if status.startswith("indexed") and self.use_dense and chunks:
             self._dense_add(doc_id)
         return self.docs[doc_id]
 
@@ -223,6 +223,11 @@ class KBIndex:
 
     def documents(self) -> list[dict]:
         return [{"doc_id": k, **v} for k, v in self.docs.items()]
+
+    def set_doc_meta(self, doc_id: str, **fields):
+        """Обновление статуса/прогресса документа (например, во время OCR)."""
+        self.docs.setdefault(doc_id, {}).update(fields)
+        self._save()
 
 
 _default_index: KBIndex | None = None

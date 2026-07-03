@@ -3,6 +3,28 @@ import { api } from '../api'
 import type { KbDoc } from '../types'
 import { ChunkModal, ErrorBox } from '../components/common'
 
+function DocStatus({ d }: { d: KbDoc }) {
+  if (d.status === 'indexed')
+    return <span className="badge bg-green-100 text-green-800">✓ индексирован</span>
+  if (d.status === 'indexed_ocr')
+    return <span className="badge bg-green-100 text-green-800"
+      title="Скан распознан Yandex Vision OCR и проиндексирован">✓ распознан (OCR)</span>
+  if (d.status === 'ocr_processing') {
+    const pct = d.pages ? Math.round(((d.ocr_done ?? 0) / d.pages) * 100) : 0
+    return (
+      <span className="badge bg-teal-50 text-teal-800 border border-teal-200">
+        <span className="inline-block w-3 h-3 mr-1.5 rounded-full border-2 border-teal-600
+          border-t-transparent animate-spin" />
+        распознаём… <span className="num ml-1">{d.ocr_done ?? 0}/{d.pages} ({pct}%)</span>
+      </span>
+    )
+  }
+  if (d.status === 'ocr_failed')
+    return <span className="badge bg-red-100 text-red-800" title={d.error}>✗ OCR не удался</span>
+  return <span className="badge bg-amber-100 text-amber-800"
+    title="Скан без текстового слоя — в поиске не участвует">⚠ требуется OCR</span>
+}
+
 export default function KB() {
   const [docs, setDocs] = useState<KbDoc[]>([])
   const [err, setErr] = useState('')
@@ -18,6 +40,14 @@ export default function KB() {
 
   const load = () => api.kbDocs().then(setDocs).catch(e => setErr(String(e)))
   useEffect(() => { load() }, [])
+
+  // пока идёт распознавание скана — поллим прогресс
+  const ocrActive = docs.some(d => d.status === 'ocr_processing')
+  useEffect(() => {
+    if (!ocrActive) return
+    const t = setInterval(load, 3000)
+    return () => clearInterval(t)
+  }, [ocrActive])
 
   const upload = async (file: File) => {
     setUploading(true); setErr('')
@@ -54,14 +84,7 @@ export default function KB() {
                   <td className="max-w-xs truncate" title={d.source}>{d.source}</td>
                   <td className="num text-right">{d.pages}</td>
                   <td className="num text-right">{d.chunks}</td>
-                  <td>
-                    {d.status === 'indexed'
-                      ? <span className="badge bg-green-100 text-green-800">✓ индексирован</span>
-                      : <span className="badge bg-amber-100 text-amber-800"
-                          title="Скан без текстового слоя — в поиске не участвует">
-                          ⚠ требуется OCR
-                        </span>}
-                  </td>
+                  <td><DocStatus d={d} /></td>
                 </tr>
               ))}
               {docs.length === 0 &&

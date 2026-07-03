@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
+import time
 
 from ..config import ROOT, settings
 
@@ -25,13 +26,25 @@ def get_embedder(model_name: str | None = None):
     for candidate in (name, FALLBACK_MODEL):
         try:
             from sentence_transformers import SentenceTransformer
+            log.info("Загрузка эмбеддинг-модели «%s» (кэш моделей: %s; при первом запуске — "
+                     "скачивание весов, это долго)…", candidate, os.environ.get("HF_HOME"))
+            t0 = time.perf_counter()
             _model = SentenceTransformer(candidate)
             _model_name = candidate
+            # метод переименован в sentence-transformers 5.x — поддержим оба
+            _dim_fn = (getattr(_model, "get_embedding_dimension", None)
+                       or getattr(_model, "get_sentence_embedding_dimension", None))
+            dim = _dim_fn() if _dim_fn else "?"
+            device = str(getattr(_model, "device", "?"))
+            log.info("Эмбеддинг-модель «%s» готова за %.1fс (dim=%s, device=%s)",
+                     candidate, time.perf_counter() - t0, dim, device)
             if candidate != name:
                 log.warning("Эмбеддинг-модель %s недоступна, fallback: %s", name, candidate)
             return _model, _model_name
         except Exception as e:  # noqa: BLE001 — деградация до BM25 важнее точной причины
-            log.warning("Не удалось загрузить эмбеддинг-модель %s: %s", candidate, type(e).__name__)
+            log.warning("Не удалось загрузить эмбеддинг-модель %s: %s: %s",
+                        candidate, type(e).__name__, e)
+    log.warning("Ни одна эмбеддинг-модель не загрузилась — KB работает на BM25-only")
     return None, None
 
 
@@ -40,4 +53,8 @@ def encode(model, name: str, texts: list[str], query: bool = False):
     if "e5" in (name or "").lower():
         prefix = "query: " if query else "passage: "
         texts = [prefix + t for t in texts]
-    return model.encode(texts, normalize_embeddings=True, show_progress_bar=False)
+    t0 = time.perf_counter()
+    vecs = model.encode(texts, normalize_embeddings=True, show_progress_bar=False)
+    log.debug("encode: %d текст(ов)%s → %.3fс", len(texts), " (query)" if query else "",
+              time.perf_counter() - t0)
+    return vecs

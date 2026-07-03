@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import logging
 import shutil
+import time
 from pathlib import Path
 
 from rank_bm25 import BM25Plus
@@ -126,14 +127,20 @@ class KBIndex:
         shutil.rmtree(self.root / "chroma", ignore_errors=True)
         col = self._collection()
         batch = [c for c in self.chunks]
-        for i in range(0, len(batch), 64):
+        total = len(batch)
+        log.info("Dense-реиндекс: %d чанков, модель «%s»…", total, name)
+        t0 = time.perf_counter()
+        for i in range(0, total, 64):
             part = batch[i:i + 64]
             emb = encode(model, name, [c["text"] for c in part])
             col.add(ids=[c["chunk_id"] for c in part],
                     embeddings=[list(map(float, e)) for e in emb],
                     metadatas=[{"source": c["source"], "page": c["page_start"]} for c in part])
+            log.info("  dense-реиндекс: %d/%d чанков закодировано", min(i + 64, total), total)
         self.meta["embed_model"] = name
         self._save()
+        log.info("Dense-реиндекс завершён за %.1fс (%d векторов, модель «%s»)",
+                 time.perf_counter() - t0, total, name)
 
     def _dense_add(self, doc_id: str):
         model, name = get_embedder()
@@ -153,6 +160,9 @@ class KBIndex:
             col.delete(ids=[c["chunk_id"] for c in part])
         except Exception:  # noqa: BLE001 — ids могло не быть
             pass
+        log.info("Dense-индексация документа «%s»: %d чанков, модель «%s»…",
+                 doc_id, len(part), name)
+        t0 = time.perf_counter()
         for i in range(0, len(part), 64):
             pp = part[i:i + 64]
             emb = encode(model, name, [c["text"] for c in pp])
@@ -161,6 +171,8 @@ class KBIndex:
                     metadatas=[{"source": c["source"], "page": c["page_start"]} for c in pp])
         self.meta["embed_model"] = name
         self._save()
+        log.info("Dense-индексация «%s» завершена за %.1fс (%d векторов)",
+                 doc_id, time.perf_counter() - t0, len(part))
 
     # ---------- поиск ----------
     def search(self, query: str, k: int = 5) -> list[dict]:
@@ -199,6 +211,9 @@ class KBIndex:
             except Exception as e:  # noqa: BLE001
                 log.warning("dense-поиск упал (%s), BM25-only", type(e).__name__)
 
+        log.info("KB-поиск «%s»: %s, BM25-кандидатов=%d, k=%d",
+                 (query[:50] + "…") if len(query) > 50 else query,
+                 "гибрид BM25+dense" if dense_used else "BM25-only", len(bm25_order), k)
         top = sorted(ranks.items(), key=lambda kv: -kv[1])[:k]
         out = []
         for cid, score in top:

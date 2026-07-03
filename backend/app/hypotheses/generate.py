@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 import uuid
 
 from ..config import METAL_PRICE_USD, ROOT
@@ -73,10 +74,17 @@ def generate_hypotheses(report: TailingsReport, diag: DiagnosticsResult, *,
     history_titles = history_titles or []
     excluded_areas = excluded_areas or []
 
-    chunks = search_multi(build_queries(diag), k_total=10, index=kb_index) if diag.diagnoses else []
+    queries = build_queries(diag)
+    log.info("Генерация гипотез: фабрика «%s», диагнозов R1–R3=%d, стоп-лист=%d, "
+             "исключённых направлений=%d, история=%d",
+             report.plant, len(diag.diagnoses), len(stoplist),
+             len(excluded_areas), len(history_titles))
+    chunks = search_multi(queries, k_total=10, index=kb_index) if diag.diagnoses else []
+    log.info("KB-контекст: %d запрос(ов) → %d релевантных чанков", len(queries), len(chunks))
 
     raw = None
     if getattr(llm, "enabled", False):
+        model_name = getattr(getattr(llm, "s", None), "llm_model_strong", "STRONG")
         diagnoses_payload = [{
             "rule_id": d.rule_id, "element": d.element, "zone": d.zone, "text": d.text,
             "inputs": d.inputs, "target_cells": d.cell_keys,
@@ -88,22 +96,36 @@ def generate_hypotheses(report: TailingsReport, diag: DiagnosticsResult, *,
                                    intervention_menu=pack().get("intervention_menu"),
                                    flowsheet_summary=flowsheet_summary,
                                    reagent_hints=reagent_hints)
+        log.info("Вызов STRONG-модели «%s» (json_mode, промпт %d симв.) — может занять минуты…",
+                 model_name, len(prompt))
+        t0 = time.perf_counter()
         try:
             resp = llm.chat([{"role": "system", "content": SYSTEM_GENERATE},
                              {"role": "user", "content": prompt}],
                             strong=True, json_mode=True)
+            dt = time.perf_counter() - t0
+            usage = resp.get("usage") or {}
+            log.info("Ответ STRONG-модели за %.1fс: %d симв., токены prompt=%s completion=%s total=%s",
+                     dt, len(resp.get("content", "")), usage.get("prompt_tokens"),
+                     usage.get("completion_tokens"), usage.get("total_tokens"))
             raw = extract_json(resp["content"])
         except (LLMUnavailable, ValueError) as e:
-            log.warning("Генерация LLM недоступна (%s) — мок из фикстуры", e)
+            log.warning("Генерация LLM недоступна за %.1fс (%s) — мок из фикстуры",
+                        time.perf_counter() - t0, e)
 
     grounded_mock = False
     if raw is None:
         raw = json.loads(MOCK_FIXTURE.read_text(encoding="utf-8"))
         grounded_mock = True
+        log.info("Генерация в МОК-режиме — фикстура %s (цитаты заземляются на локальный индекс)",
+                 MOCK_FIXTURE.name)
 
+    n_raw = len(raw.get("hypotheses", []))
     hyps = _postprocess(raw, report, diag, stoplist, excluded_areas)
     if grounded_mock:
         _ground_mock_citations(hyps, kb_index)
+    log.info("Генерация завершена: %d гипотез после валидации (сырых от модели: %d)",
+             len(hyps), n_raw)
     return hyps
 
 

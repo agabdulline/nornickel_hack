@@ -89,6 +89,45 @@ class Chunk:
     text: str = field(repr=False, default="")
 
 
+# --- фильтр служебных чанков (по итогам ручной валидации eval/kb_manual_check.md) ---
+SERVICE_MARKERS = re.compile(
+    r"^\s*(СПИСОК ЛИТЕРАТУРЫ|БИБЛИОГРАФИЧЕСКИЙ СПИСОК|СОДЕРЖАНИЕ|ОГЛАВЛЕНИЕ|REFERENCES|"
+    r"ЛИТЕРАТУРА\b)", re.IGNORECASE | re.MULTILINE)
+# для обрезки хвоста маркер ищем БЕЗ якоря строки (в PDF «СПИСОК ЛИТЕРАТУРЫ»
+# часто прилипает к концу предложения) и только в верхнем регистре
+_TAIL_MARKERS = re.compile(r"СПИСОК ЛИТЕРАТУРЫ|БИБЛИОГРАФИЧЕСКИЙ СПИСОК|REFERENCES\b")
+_CAPTION_RE = re.compile(r"\b(Рис\.|Табл(?:ица)?\.?|Fig\.)")
+
+
+def is_service_chunk(text: str) -> bool:
+    """Титулы служебных разделов, таблицы/мета, сплошные подписи к рисункам.
+
+    Пороги калиброваны на корпусе (см. eval/kb_manual_check.md): short-строки 0.8 —
+    инженерный текст с формулами и жёсткими переносами не должен отсеиваться.
+    """
+    if SERVICE_MARKERS.search(text[:300]):
+        return True
+    digits = sum(c.isdigit() for c in text) / max(len(text), 1)
+    if digits > 0.25:
+        return True  # шапки/тела таблиц, патентная мета
+    lines = [ln for ln in text.splitlines() if ln.strip()]
+    if len(lines) >= 8:
+        short = sum(1 for ln in lines if len(ln.strip()) < 25)
+        if short / len(lines) > 0.8:
+            return True  # оглавление / столбец таблицы / патентные регистры
+    caps = len(_CAPTION_RE.findall(text))
+    return caps * 1000 / max(len(text), 1) > 3
+
+
+def trim_service_tail(text: str) -> str:
+    """Обрезает всё после «СПИСОК ЛИТЕРАТУРЫ…» — библиография бесполезна для цитат.
+    Если содержательного текста до маркера мало, чанк отбраковывается по длине."""
+    m = _TAIL_MARKERS.search(text)
+    if m and m.start() > 100:
+        return text[:m.start()].rstrip()
+    return text
+
+
 def normalize_text(text: str) -> str:
     if not text:
         return ""
@@ -129,8 +168,8 @@ def chunk_document(pages: list[tuple[int | None, str]], meta: dict,
 
     def flush():
         nonlocal buf, size
-        text = "\n".join(u for u, _ in buf).strip()
-        if len(text) < 80:
+        text = trim_service_tail("\n".join(u for u, _ in buf).strip())
+        if len(text) < 80 or is_service_chunk(text):
             buf, size = [], 0
             return
         chunks.append(Chunk(

@@ -23,8 +23,8 @@ from backend.app.config import mask_key, settings  # noqa: E402
 
 FOLDER = (re.search(r"gpt://([^/]+)/", settings.llm_model_strong) or [None, ""])[1]
 KEY = settings.llm_api_key
-DOC_URI = f"emb://{FOLDER}/text-search-doc/latest"
-QUERY_URI = f"emb://{FOLDER}/text-search-query/latest"
+DOC_URI = f"emb://{FOLDER}/text-embeddings-v2-doc/latest"
+QUERY_URI = f"emb://{FOLDER}/text-embeddings-v2-query/latest"
 NATIVE_URL = "https://llm.api.cloud.yandex.net/foundationModels/v1/textEmbedding"
 
 print(f"folder: {FOLDER} | key: {mask_key(KEY)}")

@@ -3,8 +3,10 @@
 
 Разведано scripts/smoke_yandex_embed.py + probe:
 - endpoint: https://ai.api.cloud.yandex.net/v1/embeddings
-- модели: emb://<folder>/text-search-doc/latest (документы),
-          emb://<folder>/text-search-query/latest (запросы) — СТРОГО асимметрично;
+- модели (Text Embeddings v2): emb://<folder>/text-embeddings-v2-doc/latest (документы),
+  emb://<folder>/text-embeddings-v2-query/latest (запросы) — СТРОГО асимметрично.
+  Старые URI text-search-doc/query тоже живы, но это ДРУГАЯ модель (cos векторов
+  одного текста ~0.04) — смешивать их в одной коллекции нельзя;
 - dim=256; БАТЧА НЕТ («Array input must contain exactly one string») —
   параллелим до 8 одновременных запросов.
 
@@ -48,8 +50,8 @@ class YandexEmbedder(Embedder):
         if not self.api_key or not folder:
             raise RuntimeError("нет LLM_API_KEY/folder в .env — эмбеддер Yandex недоступен")
         self.url = f"{base_url}/embeddings"
-        self.doc_model = f"emb://{folder}/text-search-doc/latest"
-        self.query_model = f"emb://{folder}/text-search-query/latest"
+        self.doc_model = f"emb://{folder}/text-embeddings-v2-doc/latest"
+        self.query_model = f"emb://{folder}/text-embeddings-v2-query/latest"
         self._rate_lock = threading.Lock()
         self._next_slot = 0.0
 

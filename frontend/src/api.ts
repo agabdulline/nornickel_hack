@@ -1,5 +1,6 @@
 import type {
-  ChatAnswer, DiagnosticsResult, Hypothesis, KbDoc, Project, RoadmapItem, TailingsReport,
+  ChatAnswer, DiagnosticsResult, Equipment, Hypothesis, KbDoc, Project, ProjectConstraints,
+  RoadmapItem, TailingsReport,
 } from './types'
 
 async function j<T>(pending: Promise<Response>): Promise<T> {
@@ -17,8 +18,19 @@ export const api = {
 
   projects: () => j<Project[]>(fetch('/api/projects')),
   project: (id: string) => j<Project>(fetch(`/api/projects/${id}`)),
-  createProject: (body: { plant: string; goal?: string; constraints?: string }) =>
+  createProject: (body: {
+    plant: string; goal?: string; constraints?: string
+    project_constraints?: ProjectConstraints
+  }) =>
     j<Project>(fetch('/api/projects', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    })),
+
+  equipmentForLine: (lineId: string) =>
+    j<Equipment[]>(fetch(`/api/equipment?line_id=${encodeURIComponent(lineId)}`)),
+  addEquipment: (body: { line_id: string; name: string; position?: string; category?: string }) =>
+    j<Equipment>(fetch('/api/equipment', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
     })),

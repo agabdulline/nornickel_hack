@@ -1,7 +1,22 @@
 // Зеркала pydantic-моделей бэкенда (без строгой полноты)
+export interface Equipment {
+  id: string; line_id: string; name: string; position: string;
+  category: string; status: 'в эксплуатации' | 'резерв' | 'выведено';
+}
+
+export interface ProjectConstraints {
+  equipment: Equipment[];
+  raw_materials: string[];
+  budget_amount: number | null;
+  budget_currency: string;
+  regulatory: string[];
+  regulatory_notes: string;
+}
+
 export interface Project {
   id: string; plant: string; goal: string; constraints: string;
   created_at: string; weights: Record<string, number>; stoplist: string[];
+  project_constraints?: ProjectConstraints;
   has_report?: boolean; hypotheses_count?: number;
 }
 

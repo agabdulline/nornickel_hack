@@ -113,6 +113,16 @@ class EquipmentRef(BaseModel):
     present_on_plant: bool = True
 
 
+class Equipment(BaseModel):
+    """Единица оборудования, привязанная к конкретной линии (онтология раздела «Ограничения»)."""
+    id: str
+    line_id: str
+    name: str
+    position: str = ""
+    category: str = ""
+    status: Literal["в эксплуатации", "резерв", "выведено"] = "в эксплуатации"
+
+
 class Effect(BaseModel):
     tonnes_max: float = 0.0
     tonnes_expected: float = 0.0
@@ -173,6 +183,16 @@ class ChatAnswer(BaseModel):
     references: list[ChatReference] = Field(default_factory=list)
 
 
+class ProjectConstraints(BaseModel):
+    """Раздел «Ограничения» формы создания проекта (аддитивно к строке constraints)."""
+    equipment: list[Equipment] = Field(default_factory=list)   # снимок оборудования линии на момент создания
+    raw_materials: list[str] = Field(default_factory=list)
+    budget_amount: float | None = None
+    budget_currency: str = "RUB"
+    regulatory: list[str] = Field(default_factory=list)        # напр. ["ecology", "industrial_safety", "sector_standard"]
+    regulatory_notes: str = ""
+
+
 class Project(BaseModel):
     id: str
     plant: str
@@ -181,3 +201,4 @@ class Project(BaseModel):
     created_at: str = ""
     weights: dict = Field(default_factory=lambda: {"money": 0.4, "capex": 0.25, "risk": 0.2, "novelty": 0.15})
     stoplist: list[str] = Field(default_factory=list)
+    project_constraints: ProjectConstraints = Field(default_factory=ProjectConstraints)

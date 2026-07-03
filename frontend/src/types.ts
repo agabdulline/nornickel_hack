@@ -4,17 +4,30 @@ export interface Equipment {
   category: string; status: 'в эксплуатации' | 'резерв' | 'выведено';
 }
 
+export interface Line {
+  id: string; name: string; type: 'factory' | 'lab';
+}
+
+export interface Material {
+  id: string; name: string;
+}
+
+export type MaterialUnit = 'т' | 'кг' | '%' | 'м³';
+
+export interface LineMaterial {
+  id: string; line_id: string; material_id: string; name: string;
+  quantity: number; unit: MaterialUnit;
+}
+
 export interface ProjectConstraints {
   equipment: Equipment[];
-  raw_materials: string[];
-  budget_amount: number | null;
-  budget_currency: string;
+  materials: LineMaterial[];
   regulatory: string[];
   regulatory_notes: string;
 }
 
 export interface Project {
-  id: string; plant: string; goal: string; constraints: string;
+  id: string; name: string; plant: string; goal: string; constraints: string;
   created_at: string; weights: Record<string, number>; stoplist: string[];
   project_constraints?: ProjectConstraints;
   has_report?: boolean; hypotheses_count?: number;

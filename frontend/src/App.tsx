@@ -3,13 +3,173 @@ import {
   HashRouter, Link, NavLink, Navigate, Route, Routes, useParams,
 } from 'react-router-dom'
 import { api } from './api'
-import type { Project } from './types'
+import type { Equipment, Project, ProjectConstraints } from './types'
 import ChatPanel from './components/ChatPanel'
 import Report from './screens/Report'
 import LossMap from './screens/LossMap'
 import Hypotheses from './screens/Hypotheses'
 import ExportScreen from './screens/Export'
 import KB from './screens/KB'
+
+const REGULATORY_OPTIONS: { key: string; label: string }[] = [
+  { key: 'ecology', label: 'Экологические нормы' },
+  { key: 'industrial_safety', label: 'Промышленная безопасность' },
+  { key: 'sector_standard', label: 'Отраслевой стандарт' },
+]
+
+function emptyConstraints(): ProjectConstraints {
+  return {
+    equipment: [], raw_materials: [], budget_amount: null, budget_currency: 'RUB',
+    regulatory: [], regulatory_notes: '',
+  }
+}
+
+/** Блок «Ограничения»: оборудование линии (авто + ручное), сырьё, бюджет, нормативка. */
+function ConstraintsSection({ plant, value, onChange }: {
+  plant: string; value: ProjectConstraints
+  onChange: (v: ProjectConstraints) => void
+}) {
+  const [catalog, setCatalog] = useState<Equipment[]>([])
+  const [rawInput, setRawInput] = useState('')
+  const [manualName, setManualName] = useState('')
+  const [manualPosition, setManualPosition] = useState('')
+  const [manualCategory, setManualCategory] = useState('')
+  const [busy, setBusy] = useState(false)
+
+  useEffect(() => {
+    let live = true
+    if (!plant.trim()) { setCatalog([]); return }
+    api.equipmentForLine(plant.trim()).then(eq => {
+      if (!live) return
+      setCatalog(eq)
+      onChange({ ...value, equipment: eq })
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }).catch(() => { if (live) setCatalog([]) })
+    return () => { live = false }
+    // подтягиваем каталог только при смене линии — value намеренно не в зависимостях
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [plant])
+
+  const addManualEquipment = async () => {
+    if (!manualName.trim()) return
+    setBusy(true)
+    try {
+      const eq = await api.addEquipment({
+        line_id: plant.trim(), name: manualName.trim(),
+        position: manualPosition.trim(), category: manualCategory.trim(),
+      })
+      const next = [...catalog, eq]
+      setCatalog(next)
+      onChange({ ...value, equipment: next })
+      setManualName(''); setManualPosition(''); setManualCategory('')
+    } finally { setBusy(false) }
+  }
+
+  const addRawMaterial = () => {
+    const v = rawInput.trim()
+    if (!v || value.raw_materials.includes(v)) return
+    onChange({ ...value, raw_materials: [...value.raw_materials, v] })
+    setRawInput('')
+  }
+
+  const toggleRegulatory = (key: string) => {
+    const has = value.regulatory.includes(key)
+    onChange({ ...value, regulatory: has ? value.regulatory.filter(k => k !== key) : [...value.regulatory, key] })
+  }
+
+  return (
+    <div className="space-y-3 pt-3 border-t border-slate-100">
+      <h3 className="font-semibold text-sm text-slate-700">Ограничения</h3>
+
+      {/* оборудование линии */}
+      <div>
+        <div className="text-xs text-slate-500 mb-1">Оборудование линии</div>
+        {catalog.length === 0 && (
+          <div className="text-sm text-slate-400 mb-1">
+            {plant.trim() ? 'На этой линии оборудование ещё не заведено.' : 'Укажите линию выше.'}
+          </div>
+        )}
+        {catalog.length > 0 && (
+          <div className="flex flex-wrap gap-1.5 mb-2">
+            {catalog.map(e => (
+              <span key={e.id} className="badge bg-slate-100 text-slate-700">
+                {e.name}{e.position && ` (${e.position})`}
+              </span>
+            ))}
+          </div>
+        )}
+        <div className="flex gap-1.5">
+          <input className="flex-1 border border-slate-300 rounded px-2 py-1 text-sm"
+            placeholder="добавить единицу оборудования…"
+            value={manualName} onChange={e => setManualName(e.target.value)} />
+          <input className="w-24 border border-slate-300 rounded px-2 py-1 text-sm"
+            placeholder="позиция" value={manualPosition} onChange={e => setManualPosition(e.target.value)} />
+          <input className="w-32 border border-slate-300 rounded px-2 py-1 text-sm"
+            placeholder="категория" value={manualCategory} onChange={e => setManualCategory(e.target.value)} />
+          <button type="button" className="btn" disabled={busy || !manualName.trim()}
+            onClick={addManualEquipment}>+ Добавить</button>
+        </div>
+      </div>
+
+      {/* сырьё */}
+      <div>
+        <div className="text-xs text-slate-500 mb-1">Сырьё</div>
+        <div className="flex flex-wrap gap-1.5 mb-1.5">
+          {value.raw_materials.map(m => (
+            <span key={m} className="badge bg-teal-50 text-teal-800">
+              {m}
+              <button type="button" className="ml-1 text-teal-500 hover:text-teal-800"
+                onClick={() => onChange({ ...value, raw_materials: value.raw_materials.filter(x => x !== m) })}>
+                ✕
+              </button>
+            </span>
+          ))}
+        </div>
+        <div className="flex gap-1.5">
+          <input className="flex-1 border border-slate-300 rounded px-2 py-1 text-sm"
+            placeholder="напр.: вкрапленная руда — Enter, чтобы добавить"
+            value={rawInput} onChange={e => setRawInput(e.target.value)}
+            onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addRawMaterial() } }} />
+          <button type="button" className="btn" onClick={addRawMaterial}>+ Добавить</button>
+        </div>
+      </div>
+
+      {/* бюджет */}
+      <div className="grid grid-cols-2 gap-3">
+        <label className="text-sm">Бюджет (необязательно)
+          <input type="number" min={0} className="mt-1 w-full border border-slate-300 rounded px-2 py-1.5"
+            value={value.budget_amount ?? ''}
+            onChange={e => onChange({ ...value, budget_amount: e.target.value === '' ? null : Number(e.target.value) })} />
+        </label>
+        <label className="text-sm">Валюта
+          <select className="mt-1 w-full border border-slate-300 rounded px-2 py-1.5"
+            value={value.budget_currency}
+            onChange={e => onChange({ ...value, budget_currency: e.target.value })}>
+            <option value="RUB">RUB</option>
+            <option value="USD">USD</option>
+          </select>
+        </label>
+      </div>
+
+      {/* нормативка */}
+      <div>
+        <div className="text-xs text-slate-500 mb-1">Нормативные требования</div>
+        <div className="flex flex-wrap gap-3 mb-2">
+          {REGULATORY_OPTIONS.map(o => (
+            <label key={o.key} className="flex items-center gap-1.5 text-sm">
+              <input type="checkbox" checked={value.regulatory.includes(o.key)}
+                onChange={() => toggleRegulatory(o.key)} />
+              {o.label}
+            </label>
+          ))}
+        </div>
+        <input className="w-full border border-slate-300 rounded px-2 py-1.5 text-sm"
+          placeholder="уточнения…" value={value.regulatory_notes}
+          onChange={e => onChange({ ...value, regulatory_notes: e.target.value })} />
+      </div>
+    </div>
+  )
+}
 
 const STEPS = [
   { path: 'report', label: '1 · Данные' },
@@ -71,6 +231,7 @@ function Home() {
   const [projects, setProjects] = useState<Project[]>([])
   const [plant, setPlant] = useState('НОФ · вкрапленные руды')
   const [goal, setGoal] = useState('Снижение потерь Ni и Cu в отвальных хвостах')
+  const [constraints, setConstraints] = useState<ProjectConstraints>(emptyConstraints())
   const [err, setErr] = useState('')
 
   const load = () => api.projects().then(setProjects).catch(e => setErr(String(e)))
@@ -78,7 +239,7 @@ function Home() {
 
   const create = async () => {
     try {
-      const p = await api.createProject({ plant, goal })
+      const p = await api.createProject({ plant, goal, project_constraints: constraints })
       location.hash = `#/p/${p.id}/report`
     } catch (e) { setErr(String(e)) }
   }
@@ -104,6 +265,11 @@ function Home() {
                 value={goal} onChange={e => setGoal(e.target.value)} />
             </label>
           </div>
+
+          {plant.trim() && (
+            <ConstraintsSection plant={plant} value={constraints} onChange={setConstraints} />
+          )}
+
           <button className="btn btn-primary" onClick={create}>Создать проект</button>
           {err && <div className="text-sm text-red-600">{err}</div>}
         </div>

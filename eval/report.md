@@ -112,3 +112,25 @@ same intervention?»); в мок-режиме (без ключа) — fuzzy-фо
 (отвечает мгновенно, без thinking-паузы — судя по поведению, это и есть
 Instruct-2507-ревизия); отдельных URI с суффиксом instruct-2507 нет.
 
+## Прогон 2026-07-03 19:41 (live, gpt://b1ggusvist6c2sia1dno/deepseek-v4-flash/latest)
+
+| Пример | parse_ok | диагнозы | гипотез | coverage | citation_validity | novel | judge | время |
+|---|---|---|---|---|---|---|---|---|
+| Пример 1 | ✓ | R2/Ni, R1/Cu, R2/Cu | 13 | 3/5 (60%) | 100% | 10 | llm | 252.0с |
+| Пример 2 | ✓ | R1/Ni, R2/Ni, R1/Cu | 13 | 3/6 (50%) | 100% | 10 | llm | 235.9с |
+| Пример 3 | ✓ | R1/Ni, R2/Ni, R1/Cu, R2/Cu | 12 | 1/8 (12%) | 93% | 11 | llm | 233.6с |
+| Пример 4 | ✓ | R1/Ni | 10 | 4/8 (50%) | 100% | 6 | llm | 156.5с |
+
+**Итог:** parse_ok 4/4, средний coverage 43%, средняя citation_validity 98%, novel всего 37. Сырые данные: run_20260703_194149_live.json
+
+## Прогон 2026-07-03 19:58 (live, gpt://b1ggusvist6c2sia1dno/deepseek-v4-flash/latest)
+
+| Пример | parse_ok | диагнозы | гипотез | coverage | citation_validity | novel | judge | время |
+|---|---|---|---|---|---|---|---|---|
+| Пример 1 | ✓ | R2/Ni, R1/Cu, R2/Cu | 13 | 3/5 (60%) | 100% | 10 | llm | 153.5с |
+| Пример 2 | ✓ | R1/Ni, R2/Ni, R1/Cu | 10 | 4/6 (67%) | 100% | 6 | llm | 170.7с |
+| Пример 3 | ✓ | R1/Ni, R2/Ni, R1/Cu, R2/Cu | 8 | 4/8 (50%) | 100% | 4 | llm | 213.8с |
+| Пример 4 | ✓ | R1/Ni | 11 | 5/8 (62%) | 100% | 5 | llm | 207.2с |
+
+**Итог:** parse_ok 4/4, средний coverage 60%, средняя citation_validity 100%, novel всего 25. Сырые данные: run_20260703_195847_live.json
+

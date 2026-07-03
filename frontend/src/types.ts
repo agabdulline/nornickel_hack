@@ -4,8 +4,11 @@ export interface Equipment {
   category: string; status: 'в эксплуатации' | 'резерв' | 'выведено';
 }
 
+export type LineKind = 'производственная линия' | 'лаборатория';
+export type LineOwnership = 'в штате компании' | 'внешний подрядчик/партнёр';
+
 export interface Line {
-  id: string; name: string; type: 'factory' | 'lab';
+  id: string; name: string; kind: LineKind; ownership: LineOwnership;
 }
 
 export interface Material {

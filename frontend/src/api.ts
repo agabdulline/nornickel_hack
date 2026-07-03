@@ -29,12 +29,12 @@ export const api = {
 
   // ---------- линии/лаборатории (мастер-данные) ----------
   lines: () => j<Line[]>(fetch('/api/lines')),
-  createLine: (body: { name: string; type: 'factory' | 'lab' }) =>
+  createLine: (body: { name: string; kind?: string; ownership?: string }) =>
     j<Line>(fetch('/api/lines', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
     })),
-  updateLine: (id: string, body: { name?: string; type?: 'factory' | 'lab' }) =>
+  updateLine: (id: string, body: { name?: string; kind?: string; ownership?: string }) =>
     j<Line>(fetch(`/api/lines/${id}`, {
       method: 'PATCH', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),

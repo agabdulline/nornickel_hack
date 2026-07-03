@@ -41,7 +41,7 @@ CREATE TABLE IF NOT EXISTS equipment (
   category TEXT, status TEXT
 );
 CREATE TABLE IF NOT EXISTS lines (
-  id TEXT PRIMARY KEY, name TEXT, type TEXT
+  id TEXT PRIMARY KEY, name TEXT, type TEXT, kind TEXT, ownership TEXT
 );
 CREATE TABLE IF NOT EXISTS materials (
   id TEXT PRIMARY KEY, name TEXT
@@ -53,7 +53,11 @@ CREATE TABLE IF NOT EXISTS line_materials (
 """
 
 # сид онтологии оборудования (раздел «Ограничения») для демо-линии кейса;
-# намеренно без отсадочных машин — сценарий «оборудования нет» в п.4 задачи
+# намеренно без отсадочных машин — сценарий «оборудования нет» демонстрирует
+# отдельная линия-партнёр без единиц оборудования (см. _SEED_LINES)
+_INSTITUTE = "Институт «Норильскпроект» (филиал Гипроникеля, Норильск)"
+_PARTNER = "Институт-партнёр (внешний)"
+
 _SEED_EQUIPMENT: dict[str, list[dict]] = {
     "НОФ · вкрапленные руды": [
         {"name": "Гидроциклон ГЦ-660", "position": "5-3", "category": "гидроциклон"},
@@ -63,13 +67,28 @@ _SEED_EQUIPMENT: dict[str, list[dict]] = {
         {"name": "Флотомашина ФПМ-16-4К", "position": "3-2", "category": "флотомашина"},
         {"name": "Сгуститель П-30", "position": "7-1", "category": "сгуститель"},
     ],
+    # правдоподобный, но иллюстративный набор лабораторного оборудования по
+    # категориям из ТЗ — НЕ подтверждённый факт о реальном парке приборов института
+    _INSTITUTE: [
+        {"name": "Роторный делитель проб", "position": "", "category": "пробоподготовка"},
+        {"name": "Вибрационный ситовой анализатор", "position": "", "category": "пробоподготовка"},
+        {"name": "Тестер индекса Бонда (измельчаемость)", "position": "", "category": "дробление/измельчение"},
+        {"name": "Лабораторная флотомашина МФЛ-012М", "position": "", "category": "флотация"},
+        {"name": "Рентгенофлуоресцентный анализатор (РФА)", "position": "", "category": "элементный анализ"},
+    ],
+    # у партнёра намеренно нет оборудования — демонстрирует состояние
+    # «объект есть, но оборудование ещё не заведено»
 }
 
 # сид линий/лабораторий: id совпадает с прежним свободным именем линии —
 # так первая итерация (equipment.line_id == "НОФ · вкрапленные руды") не ломается
 _SEED_LINES: list[dict] = [
-    {"id": "НОФ · вкрапленные руды", "name": "НОФ · вкрапленные руды", "type": "factory"},
-    {"id": "Лаборатория / НИОКР", "name": "Лаборатория / НИОКР", "type": "lab"},
+    {"id": "НОФ · вкрапленные руды", "name": "НОФ · вкрапленные руды",
+     "kind": "производственная линия", "ownership": "в штате компании"},
+    {"id": _INSTITUTE, "name": _INSTITUTE,
+     "kind": "лаборатория", "ownership": "в штате компании"},
+    {"id": _PARTNER, "name": _PARTNER,
+     "kind": "лаборатория", "ownership": "внешний подрядчик/партнёр"},
 ]
 
 _SEED_MATERIALS: dict[str, list[dict]] = {
@@ -97,6 +116,7 @@ class Store:
         self._conn.executescript(_SCHEMA)
         self._migrate_project_constraints()
         self._migrate_project_name()
+        self._migrate_lines_kind_ownership()
         self._seed_equipment()
         self._seed_lines()
         self._seed_materials()
@@ -126,13 +146,29 @@ class Store:
                     (uuid.uuid4().hex[:10], line_id, item["name"], item["position"],
                      item["category"], "в эксплуатации"))
 
+    def _migrate_lines_kind_ownership(self):
+        """Аддитивная миграция: линии первой итерации хранили только type=factory|lab."""
+        cols = {r["name"] for r in self._conn.execute("PRAGMA table_info(lines)")}
+        if "kind" not in cols:
+            self._conn.execute("ALTER TABLE lines ADD COLUMN kind TEXT")
+        if "ownership" not in cols:
+            self._conn.execute("ALTER TABLE lines ADD COLUMN ownership TEXT")
+        self._conn.execute(
+            "UPDATE lines SET kind = CASE type WHEN 'factory' THEN 'производственная линия' "
+            "WHEN 'lab' THEN 'лаборатория' ELSE 'производственная линия' END WHERE kind IS NULL")
+        self._conn.execute("UPDATE lines SET ownership = 'в штате компании' WHERE ownership IS NULL")
+
     def _seed_lines(self):
-        existing = self._conn.execute("SELECT COUNT(*) c FROM lines").fetchone()["c"]
-        if existing:
-            return
+        # посрочная проверка по id (как в _seed_equipment) — иначе на уже
+        # существующей БД первой итерации новые сид-линии (институт, партнёр)
+        # никогда бы не появились, раз таблица lines уже не пуста
         for line in _SEED_LINES:
-            self._conn.execute("INSERT INTO lines VALUES (?,?,?)",
-                               (line["id"], line["name"], line["type"]))
+            existing = self._conn.execute(
+                "SELECT COUNT(*) c FROM lines WHERE id=?", (line["id"],)).fetchone()["c"]
+            if existing:
+                continue
+            self._conn.execute("INSERT INTO lines (id, name, type, kind, ownership) VALUES (?,?,?,?,?)",
+                               (line["id"], line["name"], line["kind"], line["kind"], line["ownership"]))
 
     def _seed_materials(self):
         existing = self._conn.execute("SELECT COUNT(*) c FROM line_materials").fetchone()["c"]
@@ -188,13 +224,13 @@ class Store:
         Это и есть write-through из п.7 ТЗ: equipment/materials никогда не
         читаются как снимок из project_constraints_json — только из мастер-данных
         линии по p.plant (=line_id), так что правки в «Базе знаний» сразу видны
-        в проекте и наоборот.
+        в проекте и наоборот. И линия, и лаборатория могут иметь оборудование
+        (просто разных категорий) — kind тут ни на что не влияет. Пусто
+        получится ровно тогда, когда p.plant не ссылается на реальную линию
+        (сентинел «без привязки к объекту» с фронта) — list_equipment/
+        list_line_materials на несуществующий line_id просто вернут [].
         """
-        line = self.get_line(p.plant)
-        if line and line.type == "lab":
-            p.project_constraints.equipment = []
-        else:
-            p.project_constraints.equipment = self.list_equipment(p.plant)
+        p.project_constraints.equipment = self.list_equipment(p.plant)
         p.project_constraints.materials = self.list_line_materials(p.plant)
         return p
 
@@ -216,31 +252,40 @@ class Store:
     def list_lines(self) -> list[Line]:
         with self._lock:
             rows = self._conn.execute("SELECT * FROM lines ORDER BY name").fetchall()
-            return [Line(id=r["id"], name=r["name"], type=r["type"] or "factory") for r in rows]
+            return [Line(id=r["id"], name=r["name"], kind=r["kind"] or "производственная линия",
+                        ownership=r["ownership"] or "в штате компании") for r in rows]
 
     def get_line(self, line_id: str) -> Line | None:
         with self._lock:
             row = self._conn.execute("SELECT * FROM lines WHERE id=?", (line_id,)).fetchone()
-            return Line(id=row["id"], name=row["name"], type=row["type"] or "factory") if row else None
+            return (Line(id=row["id"], name=row["name"], kind=row["kind"] or "производственная линия",
+                        ownership=row["ownership"] or "в штате компании")
+                    if row else None)
 
-    def create_line(self, name: str, type: str = "factory") -> Line:
-        line = Line(id=uuid.uuid4().hex[:10], name=name, type=type)
+    def create_line(self, name: str, kind: str = "производственная линия",
+                    ownership: str = "в штате компании") -> Line:
+        line = Line(id=uuid.uuid4().hex[:10], name=name, kind=kind, ownership=ownership)
         with self._lock:
-            self._conn.execute("INSERT INTO lines VALUES (?,?,?)", (line.id, line.name, line.type))
+            self._conn.execute(
+                "INSERT INTO lines (id, name, type, kind, ownership) VALUES (?,?,?,?,?)",
+                (line.id, line.name, line.kind, line.kind, line.ownership))
             self._conn.commit()
         return line
 
-    def update_line(self, line_id: str, name: str | None = None, type: str | None = None) -> Line | None:
+    def update_line(self, line_id: str, name: str | None = None, kind: str | None = None,
+                    ownership: str | None = None) -> Line | None:
         with self._lock:
             line = self.get_line(line_id)
             if not line:
                 return None
             if name is not None:
                 line.name = name
-            if type is not None:
-                line.type = type
-            self._conn.execute("UPDATE lines SET name=?, type=? WHERE id=?",
-                               (line.name, line.type, line.id))
+            if kind is not None:
+                line.kind = kind
+            if ownership is not None:
+                line.ownership = ownership
+            self._conn.execute("UPDATE lines SET name=?, type=?, kind=?, ownership=? WHERE id=?",
+                               (line.name, line.kind, line.kind, line.ownership, line.id))
             self._conn.commit()
         return line
 

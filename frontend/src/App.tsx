@@ -5,7 +5,7 @@ import {
 import { api } from './api'
 import type { Line, Project, ProjectConstraints } from './types'
 import ChatPanel from './components/ChatPanel'
-import { EquipmentEditor, LineCombobox, MaterialsEditor } from './components/lines'
+import { EquipmentEditor, LineCombobox, MaterialsEditor, NO_OBJECT_ID } from './components/lines'
 import Report from './screens/Report'
 import LossMap from './screens/LossMap'
 import Hypotheses from './screens/Hypotheses'
@@ -29,25 +29,30 @@ function defaultProjectName(lineName: string): string {
   return `${lineName} · Q${q} ${d.getFullYear()}`
 }
 
-/** Блок «Ограничения»: оборудование и сырьё линии (write-through), нормативка. */
+/** Блок «Ограничения»: оборудование и сырьё линии (write-through), нормативка.
+ *
+ * Развилка не «линия/лаборатория» — у обеих есть своё оборудование — а
+ * «объект выбран vs без привязки к объекту»: во втором случае площадка ещё
+ * не определена и ограничения по оборудованию/сырью не применяются вовсе. */
 function ConstraintsSection({ line, value, onChange }: {
   line: Line; value: ProjectConstraints
   onChange: (v: ProjectConstraints) => void
 }) {
+  const noObject = line.id === NO_OBJECT_ID
+
   useEffect(() => {
+    if (noObject) { onChange({ ...value, equipment: [], materials: [] }); return }
     let live = true
-    Promise.all([
-      line.type === 'lab' ? Promise.resolve([]) : api.equipmentForLine(line.id),
-      api.lineMaterials(line.id),
-    ]).then(([equipment, materials]) => {
-      if (!live) return
-      onChange({ ...value, equipment, materials })
-      // eslint-disable-next-line react-hooks/exhaustive-deps
-    }).catch(() => {})
+    Promise.all([api.equipmentForLine(line.id), api.lineMaterials(line.id)])
+      .then(([equipment, materials]) => {
+        if (!live) return
+        onChange({ ...value, equipment, materials })
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+      }).catch(() => {})
     return () => { live = false }
     // подтягиваем каталог только при смене линии — value намеренно не в зависимостях
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [line.id, line.type])
+  }, [line.id, noObject])
 
   const toggleRegulatory = (key: string) => {
     const has = value.regulatory.includes(key)
@@ -58,15 +63,21 @@ function ConstraintsSection({ line, value, onChange }: {
     <div className="space-y-3 pt-3 border-t border-slate-100">
       <h3 className="font-semibold text-sm text-slate-700">Ограничения</h3>
 
-      {line.type !== 'lab' && (
-        <EquipmentEditor lineId={line.id} value={value.equipment}
-          onChange={equipment => onChange({ ...value, equipment })} />
+      {noObject ? (
+        <div className="text-sm text-slate-400">
+          Площадка не выбрана — ограничения по оборудованию и сырью не применяются,
+          гипотезы будут теоретическими.
+        </div>
+      ) : (
+        <>
+          <EquipmentEditor lineId={line.id} value={value.equipment}
+            onChange={equipment => onChange({ ...value, equipment })} />
+          <MaterialsEditor lineId={line.id} value={value.materials}
+            onChange={materials => onChange({ ...value, materials })} />
+        </>
       )}
 
-      <MaterialsEditor lineId={line.id} value={value.materials}
-        onChange={materials => onChange({ ...value, materials })} />
-
-      {/* нормативка */}
+      {/* нормативка — не зависит от привязки к объекту */}
       <div>
         <div className="text-xs text-slate-500 mb-1">Нормативные требования</div>
         <div className="flex flex-wrap gap-3 mb-2">
@@ -79,7 +90,7 @@ function ConstraintsSection({ line, value, onChange }: {
           ))}
         </div>
         <input className="w-full border border-slate-300 rounded px-2 py-1.5 text-sm placeholder:text-slate-400"
-          placeholder="уточнения…" value={value.regulatory_notes}
+          placeholder="напр.: требуется согласование с Ростехнадзором" value={value.regulatory_notes}
           onChange={e => onChange({ ...value, regulatory_notes: e.target.value })} />
       </div>
     </div>
@@ -183,7 +194,7 @@ function Home() {
           <div className="grid grid-cols-2 gap-3">
             <label className="text-sm">Название проекта
               <input className="mt-1 w-full border border-slate-300 rounded px-2 py-1.5 placeholder:text-slate-400"
-                placeholder={line ? defaultProjectName(line.name) : 'необязательно — подставится автоматически'}
+                placeholder={line ? defaultProjectName(line.name) : 'напр.: НОФ · вкрапленные руды · Q3 2026'}
                 value={name} onChange={e => setName(e.target.value)} />
             </label>
             <label className="text-sm">Фабрика / линия

@@ -54,12 +54,14 @@ def create_project(body: ProjectIn, store: Store = Depends(get_store)) -> Projec
 # ---------- линии/лаборатории (мастер-данные, раздел «База знаний») ----------
 class LineIn(BaseModel):
     name: str
-    type: str = "factory"
+    kind: str = "производственная линия"
+    ownership: str = "в штате компании"
 
 
 class LinePatch(BaseModel):
     name: str | None = None
-    type: str | None = None
+    kind: str | None = None
+    ownership: str | None = None
 
 
 @router.get("/lines")
@@ -69,12 +71,12 @@ def list_lines(store: Store = Depends(get_store)) -> list[Line]:
 
 @router.post("/lines")
 def create_line(body: LineIn, store: Store = Depends(get_store)) -> Line:
-    return store.create_line(body.name, body.type)
+    return store.create_line(body.name, body.kind, body.ownership)
 
 
 @router.patch("/lines/{line_id}")
 def update_line(line_id: str, body: LinePatch, store: Store = Depends(get_store)) -> Line:
-    line = store.update_line(line_id, body.name, body.type)
+    line = store.update_line(line_id, body.name, body.kind, body.ownership)
     if not line:
         raise HTTPException(404, "линия не найдена")
     return line

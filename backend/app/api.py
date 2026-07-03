@@ -16,7 +16,7 @@ from .kb import search as kb_search
 from .kb.index import KBIndex, default_index
 from .kb.ingest import ingest_pdf
 from .llm import client as llm_client
-from .models import Hypothesis, Project, TailingsReport
+from .models import Equipment, Hypothesis, Project, ProjectConstraints, TailingsReport
 from .parser.docx import parse_expert_hypotheses
 from .parser.recover import recover
 from .parser.xlsx import parse_workbook
@@ -40,11 +40,33 @@ class ProjectIn(BaseModel):
     goal: str = ""
     constraints: str = ""
     weights: dict | None = None
+    project_constraints: ProjectConstraints | None = None
 
 
 @router.post("/projects")
 def create_project(body: ProjectIn, store: Store = Depends(get_store)) -> Project:
-    return store.create_project(body.plant, body.goal, body.constraints, body.weights)
+    return store.create_project(body.plant, body.goal, body.constraints, body.weights,
+                                body.project_constraints)
+
+
+# ---------- оборудование линии (раздел «Ограничения») ----------
+class EquipmentIn(BaseModel):
+    line_id: str
+    name: str
+    position: str = ""
+    category: str = ""
+    status: str = "в эксплуатации"
+
+
+@router.get("/equipment")
+def list_equipment(line_id: str, store: Store = Depends(get_store)) -> list[Equipment]:
+    return store.list_equipment(line_id)
+
+
+@router.post("/equipment")
+def add_equipment(body: EquipmentIn, store: Store = Depends(get_store)) -> Equipment:
+    return store.add_equipment(body.line_id, body.name, body.position,
+                               body.category, body.status)
 
 
 @router.get("/projects")
@@ -187,10 +209,12 @@ def generate(pid: str, body: GenerateIn, store: Store = Depends(get_store),
     store.update_project(project)
 
     history = [h.title for h in store.get_hypotheses(pid)]
+    project_equipment = project.project_constraints.equipment or store.list_equipment(project.plant)
     hyps = generate_hypotheses(
         report, diag, kb_index=kb, llm=llm_client,
         constraints=project.constraints, stoplist=project.stoplist,
-        history_titles=history, excluded_areas=body.excluded_areas)
+        history_titles=history, excluded_areas=body.excluded_areas,
+        project_equipment=[e.model_dump() for e in project_equipment])
     verify_citations(hyps, kb)
     prior = expert_titles_for_plant(report.plant) + \
         [h.title for h in store.get_hypotheses(pid, statuses=["accepted"])]

@@ -42,6 +42,19 @@ def build_queries(diag: DiagnosticsResult) -> list[str]:
     return out
 
 
+def _line_equipment_ontology(project_equipment: list[dict]) -> list[dict]:
+    """Схлопывает построчный снимок оборудования проекта (раздел «Ограничения»,
+    несколько строк на одно имя — разные позиции) к виду онтологии домен-пака."""
+    by_name: dict[str, dict] = {}
+    for e in project_equipment:
+        name = e.get("name", "")
+        entry = by_name.setdefault(name, {"name": name, "type": e.get("category", ""), "positions": []})
+        pos = (e.get("position") or "").strip()
+        if pos and pos not in entry["positions"]:
+            entry["positions"].append(pos)
+    return list(by_name.values())
+
+
 def report_summary(report: TailingsReport) -> dict:
     return {
         "фабрика": report.plant,
@@ -64,7 +77,8 @@ def generate_hypotheses(report: TailingsReport, diag: DiagnosticsResult, *,
                         constraints: str = "",
                         stoplist: list[str] | None = None,
                         history_titles: list[str] | None = None,
-                        excluded_areas: list[str] | None = None) -> list[Hypothesis]:
+                        excluded_areas: list[str] | None = None,
+                        project_equipment: list[dict] | None = None) -> list[Hypothesis]:
     kb_index = kb_index if kb_index is not None else default_index()
     llm = llm if llm is not None else default_client
     stoplist = stoplist or []
@@ -80,8 +94,9 @@ def generate_hypotheses(report: TailingsReport, diag: DiagnosticsResult, *,
             "inputs": d.inputs, "target_cells": d.cell_keys,
             "tonnes_recoverable": d.tonnes_recoverable, "uncertain": d.uncertain,
         } for d in diag.diagnoses]
+        eq_for_prompt = _line_equipment_ontology(project_equipment) if project_equipment else equipment_list()
         prompt = build_user_prompt(report_summary(report), diagnoses_payload, chunks,
-                                   equipment_list(), constraints, stoplist,
+                                   eq_for_prompt, constraints, stoplist,
                                    history_titles, excluded_areas,
                                    intervention_menu=pack().get("intervention_menu"))
         try:
@@ -97,17 +112,20 @@ def generate_hypotheses(report: TailingsReport, diag: DiagnosticsResult, *,
         raw = json.loads(MOCK_FIXTURE.read_text(encoding="utf-8"))
         grounded_mock = True
 
-    hyps = _postprocess(raw, report, diag, stoplist, excluded_areas)
+    hyps = _postprocess(raw, report, diag, stoplist, excluded_areas, project_equipment)
     if grounded_mock:
         _ground_mock_citations(hyps, kb_index)
     return hyps
 
 
 def _postprocess(raw: dict, report: TailingsReport, diag: DiagnosticsResult,
-                 stoplist: list[str], excluded_areas: list[str]) -> list[Hypothesis]:
+                 stoplist: list[str], excluded_areas: list[str],
+                 project_equipment: list[dict] | None = None) -> list[Hypothesis]:
     """Валидация ответа модели + детерминированный расчёт эффекта (раздел 6)."""
     known_types = set(pack()["hypothesis_types"].keys())
-    ontology = {e["name"]: e for e in equipment_list()}
+    # онтология линии проекта (раздел «Ограничения») вместо общей по домен-паку, если задана
+    eq_source = _line_equipment_ontology(project_equipment) if project_equipment else equipment_list()
+    ontology = {e["name"]: e for e in eq_source}
     cells_by_key = {c.key: c for c in report.cells}
     diag_by_rule: dict[str, list[str]] = {}
     for d in diag.diagnoses:
@@ -176,6 +194,9 @@ def _postprocess(raw: dict, report: TailingsReport, diag: DiagnosticsResult,
         feas = h.get("feasibility") or {}
         if any(not e.present_on_plant for e in equipment):
             feas["capex"] = "high"
+            # оборудования нет на линии -> выше риск/сложность внедрения (та же
+            # формула ранжирования, что и для остальных гипотез — rank.py::_risk_norm)
+            feas["complexity"] = "high"
 
         plan = []
         for s in h.get("verification_plan", []) or []:

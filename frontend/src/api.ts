@@ -1,5 +1,6 @@
 import type {
-  ChatAnswer, DiagnosticsResult, Hypothesis, KbDoc, Project, RoadmapItem, TailingsReport,
+  ChatAnswer, DiagnosticsResult, FlowsheetData, Hypothesis, KbDoc, Project, RoadmapItem,
+  TailingsReport,
 } from './types'
 
 async function j<T>(pending: Promise<Response>): Promise<T> {
@@ -17,11 +18,16 @@ export const api = {
 
   projects: () => j<Project[]>(fetch('/api/projects')),
   project: (id: string) => j<Project>(fetch(`/api/projects/${id}`)),
-  createProject: (body: { plant: string; goal?: string; constraints?: string }) =>
+  createProject: (body: { plant: string; goal?: string; constraints?: string; factory?: string }) =>
     j<Project>(fetch('/api/projects', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
     })),
+
+  flowsheet: (pid: string) =>
+    j<{ factory: string | null; flowsheet: FlowsheetData | null;
+        rule_node_types?: Record<string, string[]> }>(
+      fetch(`/api/projects/${pid}/flowsheet`)),
 
   uploadReport: (pid: string, file: File) => {
     const fd = new FormData()

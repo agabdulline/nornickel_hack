@@ -71,6 +71,7 @@ function Home() {
   const [projects, setProjects] = useState<Project[]>([])
   const [plant, setPlant] = useState('НОФ · вкрапленные руды')
   const [goal, setGoal] = useState('Снижение потерь Ni и Cu в отвальных хвостах')
+  const [factory, setFactory] = useState('')   // '' = авто-определение по xlsx
   const [err, setErr] = useState('')
 
   const load = () => api.projects().then(setProjects).catch(e => setErr(String(e)))
@@ -78,7 +79,7 @@ function Home() {
 
   const create = async () => {
     try {
-      const p = await api.createProject({ plant, goal })
+      const p = await api.createProject({ plant, goal, factory: factory || undefined })
       location.hash = `#/p/${p.id}/report`
     } catch (e) { setErr(String(e)) }
   }
@@ -103,6 +104,21 @@ function Home() {
               <input className="mt-1 w-full border border-slate-300 rounded px-2 py-1.5"
                 value={goal} onChange={e => setGoal(e.target.value)} />
             </label>
+            <label className="text-sm">Схема фабрики (регламент)
+              <select className="mt-1 w-full border border-slate-300 rounded px-2 py-1.5 bg-white"
+                value={factory} onChange={e => setFactory(e.target.value)}>
+                <option value="">Авто — по загруженному отчёту</option>
+                <option value="НОФ">НОФ (Норильская)</option>
+                <option value="ТОФ">ТОФ (Талнахская)</option>
+                <option value="КГМК">КГМК (Кольская)</option>
+              </select>
+            </label>
+            <div className="text-sm flex items-end">
+              <button className="btn w-full justify-center" disabled
+                title="В этой версии — предзагруженные схемы">
+                ⤒ Загрузить свой регламент
+              </button>
+            </div>
           </div>
           <button className="btn btn-primary" onClick={create}>Создать проект</button>
           {err && <div className="text-sm text-red-600">{err}</div>}

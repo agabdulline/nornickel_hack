@@ -55,7 +55,9 @@ RESPONSE_SCHEMA_HINT = {
 def build_user_prompt(report_summary: dict, diagnoses: list[dict], chunks: list[dict],
                       equipment: list[dict], constraints: str, stoplist: list[str],
                       history_titles: list[str], excluded_areas: list[str],
-                      intervention_menu: dict | None = None) -> str:
+                      intervention_menu: dict | None = None,
+                      flowsheet_summary: dict | None = None,
+                      reagent_hints: list[dict] | None = None) -> str:
     chunk_lines = "\n\n".join(
         f"[{c['chunk_id']}] ({c['source']}, с. {c['page']}):\n{c['text'][:1200]}"
         for c in chunks) or "(фрагментов нет — генерируй без цитат, поле citations пустое)"
@@ -79,6 +81,15 @@ def build_user_prompt(report_summary: dict, diagnoses: list[dict], chunks: list[
         if menu_lines:
             parts.append("НАПРАВЛЕНИЯ ВМЕШАТЕЛЬСТВ (пройдись по каждому, предложи гипотезу, "
                          "если уместно для этих данных):\n" + "\n".join(menu_lines))
+    if flowsheet_summary:
+        parts.append("РЕГЛАМЕНТ ФАБРИКИ (оцифрованная схема: узлы с режимами и хвостовые "
+                     "потоки — предлагай вмешательства в КОНКРЕТНЫЕ узлы по их названиям):\n"
+                     + json.dumps(flowsheet_summary, ensure_ascii=False, indent=1))
+    if reagent_hints:
+        parts.append("СИСТЕМНЫЕ ПОДСКАЗКИ ПО РЕАГЕНТАМ (реагент есть в режимной карте с "
+                     "расходом 0 г/т, а в литературе есть данные о его эффективности — "
+                     "рассмотри гипотезу о вводе, цитируй указанные источники):\n"
+                     + json.dumps(reagent_hints, ensure_ascii=False, indent=1))
     if constraints:
         parts.append(f"ОГРАНИЧЕНИЯ ПОЛЬЗОВАТЕЛЯ: {constraints}")
     if excluded_areas:

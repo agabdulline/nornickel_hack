@@ -1,12 +1,71 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { api, fmt } from '../api'
-import type { DiagnosticsResult, TailingsReport } from '../types'
+import type { DiagnosticsResult, FlowsheetData, FlowsheetNode, TailingsReport } from '../types'
 import { EmptyBox, ErrorBox, Spinner } from '../components/common'
 
 const FORMS = ['Раскрытый Pnt/Cp', 'Закрытый Pnt/Cp', 'Примесь в пирротине',
   'Силикатная форма', 'Пирит', 'Миллерит']
 const CLASSES = ['+125', '-125+71', '-71+45', '-45+20', '-20+10', '-10']
+
+const TYPE_ORDER = ['crushing', 'grinding', 'classification', 'flotation', 'thickening',
+  'magnetic', 'gravity']
+const TYPE_LABEL: Record<string, string> = {
+  crushing: 'Дробление', grinding: 'Измельчение', classification: 'Классификация',
+  flotation: 'Флотация', thickening: 'Сгущение', magnetic: 'Магнитная', gravity: 'Гравитация',
+}
+
+/** Граф переделов из оцифрованного регламента фабрики (реальные названия операций). */
+function FlowsheetGraph({ factory, fs, highlight }: {
+  factory: string | null; fs: FlowsheetData; highlight: Set<string>
+}) {
+  const groups = TYPE_ORDER
+    .map(t => ({ type: t, nodes: fs.nodes.filter(n => n.type === t) }))
+    .filter(g => g.nodes.length > 0)
+  const tails = fs.streams.filter(s => s.kind === 'tails')
+  const tailFrom = new Set(tails.map(s => s.from))
+
+  const regime = (n: FlowsheetNode) => {
+    const bits: string[] = []
+    if (n.t_min != null) bits.push(`t=${n.t_min}′`)
+    if (n.pct_solids != null) bits.push(`${n.pct_solids}% тв`)
+    for (const [r, v] of Object.entries(n.reagents ?? {})) bits.push(`${r} ${v} г/т`)
+    if (n.equipment_positions?.length) bits.push(`поз. ${n.equipment_positions.join(',')}`)
+    return bits.join(' · ')
+  }
+
+  return (
+    <div className="card p-3 overflow-x-auto">
+      <div className="font-semibold text-sm mb-2">
+        Схема фабрики: {factory} <span className="text-slate-400 font-normal">
+          (по оцифрованному регламенту; подсвечены переделы сработавших диагнозов)</span>
+      </div>
+      <div className="flex items-stretch gap-1 min-w-max pb-1">
+        {groups.map((g, gi) => (
+          <div key={g.type} className="flex items-center gap-1">
+            {gi > 0 && <div className="text-slate-300 text-xl px-0.5">→</div>}
+            <div className="border border-slate-200 rounded p-1.5 bg-slate-50">
+              <div className="text-[10px] uppercase text-slate-400 mb-1">{TYPE_LABEL[g.type]}</div>
+              <div className="flex gap-1">
+                {g.nodes.map(n => (
+                  <div key={n.id} title={regime(n)}
+                    className={`rounded px-2 py-1 text-xs max-w-44 border ${highlight.has(n.id)
+                      ? 'bg-amber-100 border-amber-400 font-semibold'
+                      : 'bg-white border-slate-200'}`}>
+                    <div className="truncate">{n.name}</div>
+                    {regime(n) && <div className="text-[10px] text-slate-500 truncate num">{regime(n)}</div>}
+                    {tailFrom.has(n.id) &&
+                      <div className="text-[10px] text-red-600">▼ хвосты</div>}
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
 
 export default function LossMap() {
   const { pid = '' } = useParams()
@@ -17,6 +76,11 @@ export default function LossMap() {
   const [el, setEl] = useState<'Ni' | 'Cu'>('Ni')
   const [err, setErr] = useState('')
   const [openRule, setOpenRule] = useState<string | null>(null)
+  const [fsInfo, setFsInfo] = useState<{ factory: string | null; flowsheet: FlowsheetData | null } | null>(null)
+
+  useEffect(() => {
+    api.flowsheet(pid).then(setFsInfo).catch(() => setFsInfo(null))
+  }, [pid])
 
   useEffect(() => {
     api.report(pid)
@@ -63,6 +127,11 @@ export default function LossMap() {
           извлекаемо <b className="num text-green-700">{fmt.pct(report.recoverable_pct[el])}</b>
         </span>
       </div>
+
+      {fsInfo?.flowsheet && (
+        <FlowsheetGraph factory={fsInfo.factory} fs={fsInfo.flowsheet}
+          highlight={new Set(diag.diagnoses.flatMap(d => d.node_refs ?? []))} />
+      )}
 
       <div className="flex gap-4 items-start">
         {/* тепловая матрица */}

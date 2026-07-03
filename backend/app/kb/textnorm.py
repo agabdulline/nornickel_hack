@@ -13,11 +13,30 @@ _HYPHEN_RE = re.compile(r"([а-яёa-z])[\-­]\s*\n\s*([а-яёa-z])", re.IGNORE
 # разреженные буквы: 3+ одиночных букв через пробел («Д л я», «ф л о т а ц и я»)
 _SPACED_RE = re.compile(r"\b(?:[А-Яа-яЁёA-Za-z][ \t]+){2,}[А-Яа-яЁёA-Za-z]\b")
 _MULTISPACE_RE = re.compile(r"[ \t]{2,}")
+_LAT1SUP_RE = re.compile(r"[À-ÿ]")
+_CYR_RE = re.compile(r"[а-яА-ЯёЁ]")
+
+
+def fix_mojibake(text: str) -> str:
+    """Битый текстовый слой PDF: cp1251, показанная как latin-1 («Áîëîáîâ»→«Болобов»).
+    Типовая болячка PDF из ГИАБ."""
+    if not text:
+        return text
+    lat1 = len(_LAT1SUP_RE.findall(text))
+    if lat1 <= max(len(_CYR_RE.findall(text)), 20):
+        return text
+    for enc in ("cp1252", "latin-1"):
+        try:
+            return text.encode(enc, errors="replace").decode("cp1251", errors="replace")
+        except (UnicodeError, LookupError):
+            continue
+    return text
 
 
 def normalize_page_text(text: str) -> str:
     if not text:
         return ""
+    text = fix_mojibake(text)
     text = _HYPHEN_RE.sub(r"\1\2", text)
     text = _SPACED_RE.sub(lambda m: re.sub(r"[ \t]+", "", m.group(0)), text)
     text = _MULTISPACE_RE.sub(" ", text)

@@ -36,6 +36,26 @@ export interface Diagnosis {
   rule_id: string; zone: string; title: string; text: string; element: 'Ni' | 'Cu';
   inputs: Record<string, unknown>; cell_keys: string[];
   tonnes_recoverable: number; uncertain: boolean;
+  node_refs?: string[]; regime_line?: string | null;
+}
+
+export interface FlowsheetNode {
+  id: string; name: string; type: string;
+  t_min?: string | number | null; pct_solids?: number | null;
+  reagents?: Record<string, number> | null;
+  equipment_positions?: string[] | null;
+}
+
+export interface FlowsheetStream {
+  from: string; to: string; kind: string; name?: string | null;
+  gamma?: number | null; beta_cu?: number | null; beta_ni?: number | null;
+  eps_cu?: number | null; eps_ni?: number | null;
+}
+
+export interface FlowsheetData {
+  source_files?: string[];
+  nodes: FlowsheetNode[];
+  streams: FlowsheetStream[];
 }
 
 export interface DiagnosticsResult {

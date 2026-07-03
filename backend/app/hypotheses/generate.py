@@ -64,7 +64,9 @@ def generate_hypotheses(report: TailingsReport, diag: DiagnosticsResult, *,
                         constraints: str = "",
                         stoplist: list[str] | None = None,
                         history_titles: list[str] | None = None,
-                        excluded_areas: list[str] | None = None) -> list[Hypothesis]:
+                        excluded_areas: list[str] | None = None,
+                        flowsheet_summary: dict | None = None,
+                        reagent_hints: list[dict] | None = None) -> list[Hypothesis]:
     kb_index = kb_index if kb_index is not None else default_index()
     llm = llm if llm is not None else default_client
     stoplist = stoplist or []
@@ -83,7 +85,9 @@ def generate_hypotheses(report: TailingsReport, diag: DiagnosticsResult, *,
         prompt = build_user_prompt(report_summary(report), diagnoses_payload, chunks,
                                    equipment_list(), constraints, stoplist,
                                    history_titles, excluded_areas,
-                                   intervention_menu=pack().get("intervention_menu"))
+                                   intervention_menu=pack().get("intervention_menu"),
+                                   flowsheet_summary=flowsheet_summary,
+                                   reagent_hints=reagent_hints)
         try:
             resp = llm.chat([{"role": "system", "content": SYSTEM_GENERATE},
                              {"role": "user", "content": prompt}],

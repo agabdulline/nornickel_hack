@@ -97,6 +97,8 @@ class Diagnosis(BaseModel):
     cell_keys: list[str] = Field(default_factory=list)
     tonnes_recoverable: float = 0.0
     uncertain: bool = False                      # опирается на recovered_llm
+    node_refs: list[str] = Field(default_factory=list)  # узлы flowsheet фабрики
+    regime_line: str | None = None               # «по регламенту: узел, t=…, %тв=…»
 
 
 class Citation(BaseModel):
@@ -181,3 +183,4 @@ class Project(BaseModel):
     created_at: str = ""
     weights: dict = Field(default_factory=lambda: {"money": 0.4, "capex": 0.25, "risk": 0.2, "novelty": 0.15})
     stoplist: list[str] = Field(default_factory=list)
+    factory: str | None = None   # НОФ|ТОФ|КГМК: оверрайд селектором или авто по xlsx

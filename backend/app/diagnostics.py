@@ -78,7 +78,7 @@ def _has_recovered(cells: list[LossCell]) -> bool:
     return any(c.provenance != "measured" for c in cells)
 
 
-def run_diagnostics(report: TailingsReport) -> DiagnosticsResult:
+def run_diagnostics(report: TailingsReport, flowsheet: dict | None = None) -> DiagnosticsResult:
     res = DiagnosticsResult()
     for el in ("Ni", "Cu"):
         total = report.losses_tonnes.get(el) or sum(_t(c) for c in _cells(report, el))
@@ -90,7 +90,21 @@ def run_diagnostics(report: TailingsReport) -> DiagnosticsResult:
         _r4(report, el, res)
     _r5(report, res)
     res.loss_map = _loss_map(report)
+    if flowsheet:
+        _attach_flowsheet(res, flowsheet)
     return res
+
+
+def _attach_flowsheet(res: DiagnosticsResult, flowsheet: dict):
+    """Привязка диагнозов к узлам оцифрованной схемы фабрики (раздел flowsheets)."""
+    from .flowsheet import node_regime_line, nodes_for_rule
+    for d in res.diagnoses:
+        nodes = nodes_for_rule(d.rule_id, flowsheet)
+        if not nodes:
+            continue
+        d.node_refs = [n["id"] for n in nodes[:4]]
+        d.regime_line = node_regime_line(nodes[0])
+        d.text += " " + d.regime_line + "."
 
 
 def _r1(report: TailingsReport, el: str, total: float, res: DiagnosticsResult):

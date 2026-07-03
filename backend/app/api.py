@@ -40,11 +40,13 @@ class ProjectIn(BaseModel):
     goal: str = ""
     constraints: str = ""
     weights: dict | None = None
+    factory: str | None = None   # оверрайд селектором; иначе авто по xlsx
 
 
 @router.post("/projects")
 def create_project(body: ProjectIn, store: Store = Depends(get_store)) -> Project:
-    return store.create_project(body.plant, body.goal, body.constraints, body.weights)
+    return store.create_project(body.plant, body.goal, body.constraints,
+                                body.weights, factory=body.factory)
 
 
 @router.get("/projects")
@@ -73,7 +75,7 @@ def _project_or_404(pid: str, store: Store) -> Project:
 @router.post("/projects/{pid}/report")
 async def upload_report(pid: str, file: UploadFile,
                         store: Store = Depends(get_store)) -> dict:
-    _project_or_404(pid, store)
+    project = _project_or_404(pid, store)
     data = await file.read()
     name = unicodedata.normalize("NFC", file.filename or "report.xlsx")
     try:
@@ -87,9 +89,27 @@ async def upload_report(pid: str, file: UploadFile,
         stats.append({"tail_type": r.tail_type, **recover(r, llm=llm_client)})
     store.save_reports(pid, name, res.reports, {"issues": [i.model_dump() for i in res.issues],
                                                 "parse_meta": res.meta})
-    return {"source": name, "plant": res.plant,
+    if not project.factory:  # авто-определение фабрики, если нет оверрайда
+        from .flowsheet import detect_factory
+        detected = detect_factory(name, res.plant)
+        if detected:
+            project.factory = detected
+            store.update_project(project)
+    return {"source": name, "plant": res.plant, "factory": project.factory,
             "reports": [r.model_dump() for r in res.reports],
             "recover_stats": stats, "meta": res.meta}
+
+
+def _project_flowsheet(pid: str, store: Store) -> tuple[str | None, dict | None]:
+    from .flowsheet import detect_factory, get_flowsheet
+    project = store.get_project(pid)
+    factory = project.factory if project else None
+    if not factory:
+        got = store.get_reports(pid)
+        if got:
+            _reports, meta = got
+            factory = detect_factory(meta.get("source", ""), _reports[0].plant)
+    return factory, get_flowsheet(factory)
 
 
 @router.get("/projects/{pid}/report")
@@ -156,9 +176,22 @@ def get_diagnostics(pid: str, tail_type: str | None = None,
         raise HTTPException(404, "отчёт ещё не загружен")
     reports, _meta = got
     report = _pick_report(reports, tail_type)
-    diag = run_diagnostics(report)
-    return {"tail_type": report.tail_type, **diag.model_dump(),
+    factory, flowsheet = _project_flowsheet(pid, store)
+    diag = run_diagnostics(report, flowsheet=flowsheet)
+    return {"tail_type": report.tail_type, "factory": factory, **diag.model_dump(),
             "report_issues": [i.model_dump() for i in report.issues]}
+
+
+@router.get("/projects/{pid}/flowsheet")
+def get_project_flowsheet(pid: str, store: Store = Depends(get_store)) -> dict:
+    """Оцифрованная схема фабрики проекта — для графа переделов на экране диагностики."""
+    from .flowsheet import RULE_NODE_TYPES, factories_available
+    _project_or_404(pid, store)
+    factory, flowsheet = _project_flowsheet(pid, store)
+    if not flowsheet:
+        return {"factory": factory, "available": factories_available(), "flowsheet": None}
+    return {"factory": factory, "available": factories_available(),
+            "flowsheet": flowsheet, "rule_node_types": RULE_NODE_TYPES}
 
 
 # ---------- гипотезы ----------
@@ -187,10 +220,14 @@ def generate(pid: str, body: GenerateIn, store: Store = Depends(get_store),
     store.update_project(project)
 
     history = [h.title for h in store.get_hypotheses(pid)]
+    from .flowsheet import summarize_for_prompt, zero_reagent_hints
+    factory, _fs = _project_flowsheet(pid, store)
     hyps = generate_hypotheses(
         report, diag, kb_index=kb, llm=llm_client,
         constraints=project.constraints, stoplist=project.stoplist,
-        history_titles=history, excluded_areas=body.excluded_areas)
+        history_titles=history, excluded_areas=body.excluded_areas,
+        flowsheet_summary=summarize_for_prompt(factory),
+        reagent_hints=zero_reagent_hints(factory, kb_index=kb))
     verify_citations(hyps, kb)
     prior = expert_titles_for_plant(report.plant) + \
         [h.title for h in store.get_hypotheses(pid, statuses=["accepted"])]

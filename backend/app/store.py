@@ -49,19 +49,24 @@ class Store:
         self._conn = sqlite3.connect(self.path, check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
         self._conn.executescript(_SCHEMA)
+        try:  # миграция: колонка factory появилась после первых БД
+            self._conn.execute("ALTER TABLE projects ADD COLUMN factory TEXT")
+        except sqlite3.OperationalError:
+            pass
         self._conn.commit()
 
     # ---------- проекты ----------
     def create_project(self, plant: str, goal: str = "", constraints: str = "",
-                       weights: dict | None = None) -> Project:
+                       weights: dict | None = None, factory: str | None = None) -> Project:
         p = Project(id=uuid.uuid4().hex[:10], plant=plant, goal=goal,
-                    constraints=constraints, created_at=_now())
+                    constraints=constraints, created_at=_now(), factory=factory)
         if weights:
             p.weights = weights
         self._conn.execute(
-            "INSERT INTO projects VALUES (?,?,?,?,?,?,?)",
+            "INSERT INTO projects (id, plant, goal, constraints, created_at, "
+            "weights_json, stoplist_json, factory) VALUES (?,?,?,?,?,?,?,?)",
             (p.id, p.plant, p.goal, p.constraints, p.created_at,
-             json.dumps(p.weights), json.dumps(p.stoplist, ensure_ascii=False)))
+             json.dumps(p.weights), json.dumps(p.stoplist, ensure_ascii=False), p.factory))
         self._conn.commit()
         return p
 
@@ -72,7 +77,8 @@ class Store:
         return Project(id=row["id"], plant=row["plant"], goal=row["goal"],
                        constraints=row["constraints"], created_at=row["created_at"],
                        weights=json.loads(row["weights_json"] or "{}"),
-                       stoplist=json.loads(row["stoplist_json"] or "[]"))
+                       stoplist=json.loads(row["stoplist_json"] or "[]"),
+                       factory=row["factory"] if "factory" in row.keys() else None)
 
     def list_projects(self) -> list[Project]:
         rows = self._conn.execute("SELECT id FROM projects ORDER BY created_at DESC").fetchall()
@@ -80,9 +86,10 @@ class Store:
 
     def update_project(self, p: Project):
         self._conn.execute(
-            "UPDATE projects SET weights_json=?, stoplist_json=?, goal=?, constraints=? WHERE id=?",
+            "UPDATE projects SET weights_json=?, stoplist_json=?, goal=?, constraints=?, "
+            "factory=? WHERE id=?",
             (json.dumps(p.weights), json.dumps(p.stoplist, ensure_ascii=False),
-             p.goal, p.constraints, p.id))
+             p.goal, p.constraints, p.factory, p.id))
         self._conn.commit()
 
     # ---------- отчёты ----------

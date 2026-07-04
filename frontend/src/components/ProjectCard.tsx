@@ -38,6 +38,9 @@ export function ProjectCard({ p, onDelete }: { p: Project; onDelete?: (p: Projec
       <div className="min-w-0 flex-1">
         <div className="font-bold truncate">{p.name || p.plant}</div>
         <div className="text-sm truncate mt-0.5" style={{ color: 'var(--c-muted)' }}>
+          {p.material && p.material !== 'отвальные хвосты' && (
+            <span className="badge badge-brand mr-1.5 align-middle">{p.material}</span>
+          )}
           {p.goal ? `Цель: ${p.goal}` : '—'}
         </div>
       </div>

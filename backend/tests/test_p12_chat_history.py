@@ -147,6 +147,33 @@ def test_chat_persists_history_per_dialog(client):
     assert c.delete(f"/api/projects/{pid}/chat/history").json()["cleared"] == 2
 
 
+# ---------- диалоги ассистента базы знаний (главная, без проекта) ----------
+def test_kb_chat_dialogs(client):
+    c, store = client
+    assert c.get("/api/kb/chats").json() == []
+    assert c.get("/api/kb/chat/history").json() == {"chat_id": None, "messages": []}
+
+    # вопрос без chat_id создаёт диалог; индекс пуст и LLM замокана —
+    # ask честно отвечает «ничего не найдено», история всё равно пишется
+    r = c.post("/api/kb/chat", json={"question": "что влияет на флотацию шламов?"})
+    assert r.status_code == 200
+    cid = r.json()["chat_id"]
+    chats = c.get("/api/kb/chats").json()
+    assert chats[0]["id"] == cid
+    assert chats[0]["title"].startswith("что влияет на флотацию")
+
+    h = c.get(f"/api/kb/chat/history?chat_id={cid}").json()
+    assert [m["role"] for m in h["messages"]] == ["user", "assistant"]
+
+    # диалоги БЗ не смешиваются с проектными и удаляются отдельно
+    pid = c.post("/api/projects", json={"plant": "НОФ"}).json()["id"]
+    assert c.get(f"/api/projects/{pid}/chats").json() == []
+    assert store.list_chats("__kb__")[0]["id"] == cid
+    assert c.delete(f"/api/kb/chats/{cid}").json() == {"ok": True}
+    assert c.get("/api/kb/chats").json() == []
+    assert c.delete("/api/kb/chats/nope").status_code == 404
+
+
 # ---------- действия и продолжения ----------
 def test_parse_actions_validation():
     from backend.app.chat import _parse_actions

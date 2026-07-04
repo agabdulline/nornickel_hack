@@ -61,16 +61,6 @@ const KB_SUGGESTIONS = [
   'Зачем доизмельчать сростки пентландита?',
 ]
 
-const KB_STORE_KEY = 'fh-kb-chat'
-
-function loadKbMsgs(): Msg[] {
-  try {
-    const raw = localStorage.getItem(KB_STORE_KEY)
-    const parsed = raw ? JSON.parse(raw) : []
-    return Array.isArray(parsed) ? parsed : []
-  } catch { return [] }
-}
-
 /** Ссылка по тексту в квадратных скобках: сперва точное совпадение со списком
  *  references ответа, затем распознавание по форме id. */
 function matchRef(inner: string, refs: ChatReference[]): ChatReference | null {
@@ -211,9 +201,9 @@ function ChartBlock({ chart }: { chart: ChatChart }) {
   )
 }
 
-/** Чат-ассистент. С `pid` — интерпретатор проекта: несколько диалогов,
- *  история на сервере (переживает закрытие панели и перезагрузку);
- *  без `pid` (на главной) — вопрос к базе знаний, история в localStorage. */
+/** Чат-ассистент. С `pid` — интерпретатор проекта; без `pid` (на главной) —
+ *  эксперт по литературе БЗ. В обоих режимах — несколько диалогов с историей
+ *  на сервере (переживает закрытие панели и перезагрузку). */
 export default function ChatPanel({ pid, onClose }: { pid?: string; onClose: () => void }) {
   const nav = useNavigate()
   const { pathname } = useLocation()
@@ -222,8 +212,8 @@ export default function ChatPanel({ pid, onClose }: { pid?: string; onClose: () 
   const kbMode = !pid
   const [chats, setChats] = useState<ChatMeta[]>([])
   const [active, setActive] = useState<string | null>(null)
-  const [msgs, setMsgs] = useState<Msg[]>(() => (kbMode ? loadKbMsgs() : []))
-  const [histLoading, setHistLoading] = useState(!kbMode)
+  const [msgs, setMsgs] = useState<Msg[]>([])
+  const [histLoading, setHistLoading] = useState(true)
   const [input, setInput] = useState('')
   const [busy, setBusy] = useState(false)
   const [chunk, setChunk] = useState<string | null>(null)
@@ -231,27 +221,32 @@ export default function ChatPanel({ pid, onClose }: { pid?: string; onClose: () 
   const inputRef = useRef<HTMLInputElement>(null)
   const reqSeq = useRef(0)   // защита от гонок при переключении диалогов
 
+  const listChats = useCallback(() => pid ? api.chats(pid) : api.kbChats(), [pid])
+  const createChat = useCallback(() => pid ? api.chatCreate(pid) : api.kbChatCreate(), [pid])
+  const removeChat = useCallback((cid: string) =>
+    pid ? api.chatDelete(pid, cid) : api.kbChatDelete(cid), [pid])
+  const fetchHistory = useCallback((cid: string) =>
+    pid ? api.chatHistory(pid, cid) : api.kbChatHistory(cid), [pid])
+
   const mapHistory = (ms: { role: 'user' | 'assistant'; content: string
     references: ChatReference[]; charts?: ChatChart[] }[]): Msg[] =>
     ms.map(m => ({ role: m.role, content: m.content, refs: m.references, charts: m.charts }))
 
   const loadHistory = useCallback(async (cid: string | null) => {
-    if (!pid) return
     const seq = ++reqSeq.current
     if (!cid) { setMsgs([]); setHistLoading(false); return }
     setHistLoading(true)
     try {
-      const h = await api.chatHistory(pid, cid)
+      const h = await fetchHistory(cid)
       if (seq === reqSeq.current) setMsgs(mapHistory(h.messages))
     } catch { /* истории нет — чистый лист */ }
     finally { if (seq === reqSeq.current) setHistLoading(false) }
-  }, [pid])
+  }, [fetchHistory])
 
-  // диалоги проекта — с сервера; открываем самый свежий
+  // диалоги — с сервера; открываем самый свежий
   useEffect(() => {
-    if (!pid) return
     let live = true
-    api.chats(pid)
+    listChats()
       .then(cs => {
         if (!live) return
         setChats(cs)
@@ -261,19 +256,12 @@ export default function ChatPanel({ pid, onClose }: { pid?: string; onClose: () 
       })
       .catch(() => { if (live) setHistLoading(false) })
     return () => { live = false }
-  }, [pid, loadHistory])
-
-  // история режима БЗ — в localStorage
-  useEffect(() => {
-    if (!kbMode) return
-    try { localStorage.setItem(KB_STORE_KEY, JSON.stringify(msgs.slice(-40))) } catch { /* квота */ }
-  }, [kbMode, msgs])
+  }, [listChats, loadHistory])
 
   useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [msgs, busy])
 
   const refreshChats = async () => {
-    if (!pid) return
-    try { setChats(await api.chats(pid)) } catch { /* не критично */ }
+    try { setChats(await listChats()) } catch { /* не критично */ }
   }
 
   const send = async (text: string, retry = false) => {
@@ -285,12 +273,12 @@ export default function ChatPanel({ pid, onClose }: { pid?: string; onClose: () 
     setInput('')
     setBusy(true)
     try {
+      let cid = active
+      if (!cid) {
+        cid = (await createChat()).id
+        setActive(cid)
+      }
       if (pid) {
-        let cid = active
-        if (!cid) {
-          cid = (await api.chatCreate(pid)).id
-          setActive(cid)
-        }
         const ans = await api.chat(pid, text, cid, page)
         setMsgs(m => [...m, {
           role: 'assistant', content: ans.text,
@@ -298,12 +286,12 @@ export default function ChatPanel({ pid, onClose }: { pid?: string; onClose: () 
           actions: (ans.actions ?? []).map(a => ({ action: a, status: 'offered' as const })),
           followups: ans.followups,
         }])
-        refreshChats()   // подхватить авто-заголовок диалога
       } else {
-        const ans = await api.kbAsk(text)
+        const ans = await api.kbChat(text, cid)
         const refs: ChatReference[] = ans.citations.map(c => ({ type: 'chunk', id: c.chunk_id }))
         setMsgs(m => [...m, { role: 'assistant', content: ans.answer, refs }])
       }
+      refreshChats()   // подхватить авто-заголовок диалога
     } catch (e) {
       setMsgs(m => [...m, {
         role: 'assistant', error: true, retryText: text,
@@ -330,21 +318,14 @@ export default function ChatPanel({ pid, onClose }: { pid?: string; onClose: () 
   }
 
   const deleteActiveChat = async () => {
-    if (!pid || !active || busy) return
+    if (!active || busy) return
     if (!window.confirm('Удалить этот диалог?')) return
-    try { await api.chatDelete(pid, active) } catch { /* мог быть уже удалён */ }
+    try { await removeChat(active) } catch { /* мог быть уже удалён */ }
     const rest = chats.filter(c => c.id !== active)
     setChats(rest)
     const next = rest[0]?.id ?? null
     setActive(next)
     loadHistory(next)
-  }
-
-  const clearKb = () => {
-    if (!window.confirm('Очистить историю диалога?')) return
-    try { localStorage.removeItem(KB_STORE_KEY) } catch { /* пусто */ }
-    setMsgs([])
-    inputRef.current?.focus()
   }
 
   const openRef = (r: ChatReference) => {
@@ -423,20 +404,14 @@ export default function ChatPanel({ pid, onClose }: { pid?: string; onClose: () 
           </div>
         </div>
         <div className="flex items-center gap-1 ml-auto shrink-0">
-          {kbMode && msgs.length > 0 && (
-            <button className="btn btn-ghost !px-2" onClick={clearKb}
-              title="Очистить историю" aria-label="Очистить историю">
-              <Icon name="trash" className="w-4 h-4" />
-            </button>
-          )}
           <button className="btn btn-ghost !px-2" onClick={onClose} aria-label="Закрыть">
             <Icon name="x" />
           </button>
         </div>
       </header>
 
-      {/* Диалоги проекта: переключить / новый / удалить */}
-      {!kbMode && (chats.length > 0 || active === null) && (
+      {/* Диалоги: переключить / новый / удалить (в обоих режимах) */}
+      {(chats.length > 0 || active === null) && (
         <div className="flex items-center gap-1.5 px-4 py-2 border-b border-line shrink-0">
           <select className="input !h-8 !py-0 flex-1 min-w-0 text-[13px]"
             value={active ?? ''} disabled={busy}

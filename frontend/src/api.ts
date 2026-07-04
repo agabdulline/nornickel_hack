@@ -226,6 +226,21 @@ export const api = {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ question }),
       })),
+  // ассистент БЗ на главной: те же серверные диалоги, что у проектного
+  kbChats: () => j<ChatMeta[]>(fetch('/api/kb/chats')),
+  kbChatCreate: () => j<ChatMeta>(fetch('/api/kb/chats', { method: 'POST' })),
+  kbChatDelete: (chatId: string) =>
+    j<{ ok: boolean }>(fetch(`/api/kb/chats/${encodeURIComponent(chatId)}`, { method: 'DELETE' })),
+  kbChatHistory: (chatId?: string) =>
+    j<{ chat_id: string | null; messages: ChatHistoryMsg[] }>(
+      fetch('/api/kb/chat/history' + (chatId ? `?chat_id=${encodeURIComponent(chatId)}` : ''))),
+  kbChat: (question: string, chatId?: string) =>
+    j<{ answer: string; chat_id: string
+        citations: { chunk_id: string; source: string; page: number; quote: string }[] }>(
+      fetch('/api/kb/chat', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ question, chat_id: chatId }),
+      })),
   kbChunk: (chunkId: string) =>
     j<{
       chunk_id: string; doc_id: string; text: string; source: string

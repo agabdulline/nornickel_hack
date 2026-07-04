@@ -923,3 +923,67 @@ class AskIn(BaseModel):
 @router.post("/kb/ask")
 def kb_ask(body: AskIn, kb: KBIndex = Depends(get_kb)) -> dict:
     return kb_search.ask(body.question, k=body.k, index=kb, llm=llm_client)
+
+
+# ---------- диалоги ассистента базы знаний (главная, без проекта) ----------
+# живут в тех же таблицах chats/chat_messages под сентинел-скоупом вместо
+# project_id — история на сервере, как у проектного ассистента
+KB_CHAT_SCOPE = "__kb__"
+
+
+class KbChatIn(BaseModel):
+    question: str
+    k: int = 5
+    chat_id: str | None = None
+
+
+def _kb_chat_or_404(chat_id: str, store: Store) -> dict:
+    chat = store.get_chat(chat_id)
+    if not chat or chat["project_id"] != KB_CHAT_SCOPE:
+        raise HTTPException(404, "диалог не найден")
+    return chat
+
+
+@router.get("/kb/chats")
+def kb_chats(store: Store = Depends(get_store)) -> list[dict]:
+    return store.list_chats(KB_CHAT_SCOPE)
+
+
+@router.post("/kb/chats")
+def kb_chat_create(store: Store = Depends(get_store)) -> dict:
+    return store.create_chat(KB_CHAT_SCOPE)
+
+
+@router.delete("/kb/chats/{chat_id}")
+def kb_chat_delete(chat_id: str, store: Store = Depends(get_store)) -> dict:
+    _kb_chat_or_404(chat_id, store)
+    store.delete_chat(chat_id)
+    return {"ok": True}
+
+
+@router.get("/kb/chat/history")
+def kb_chat_history(chat_id: str | None = None,
+                    store: Store = Depends(get_store)) -> dict:
+    chat = (_kb_chat_or_404(chat_id, store) if chat_id
+            else store.latest_chat(KB_CHAT_SCOPE))
+    if not chat:
+        return {"chat_id": None, "messages": []}
+    return {"chat_id": chat["id"],
+            "messages": store.get_chat_messages(KB_CHAT_SCOPE, chat_id=chat["id"])}
+
+
+@router.post("/kb/chat")
+def kb_chat(body: KbChatIn, store: Store = Depends(get_store),
+            kb: KBIndex = Depends(get_kb)) -> dict:
+    """Вопрос к БЗ с серверной историей диалога (ответ — как /kb/ask)."""
+    chat = (_kb_chat_or_404(body.chat_id, store) if body.chat_id
+            else store.latest_chat(KB_CHAT_SCOPE) or store.create_chat(KB_CHAT_SCOPE))
+    res = kb_search.ask(body.question, k=body.k, index=kb, llm=llm_client)
+    refs = [{"type": "chunk", "id": c["chunk_id"]}
+            for c in res.get("citations", []) if c.get("chunk_id")]
+    store.add_chat_message(KB_CHAT_SCOPE, "user", body.question, chat_id=chat["id"])
+    store.add_chat_message(KB_CHAT_SCOPE, "assistant", res.get("answer", ""),
+                           refs=refs, chat_id=chat["id"])
+    if chat["title"] in _DEFAULT_CHAT_TITLES:   # заголовок из первого вопроса
+        store.rename_chat(chat["id"], body.question.strip()[:48] or "Диалог")
+    return {**res, "chat_id": chat["id"]}

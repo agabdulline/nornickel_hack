@@ -31,9 +31,6 @@ const RULE_TITLES: Record<string, string> = {
 }
 
 const _LMH: Record<string, number> = { low: 0, med: 0.5, medium: 0.5, high: 1 }
-const _LMH_RU: Record<string, string> = {
-  low: 'низкая', med: 'средняя', medium: 'средняя', high: 'высокая',
-}
 const _plural = (n: number, one: string, few: string, many: string) =>
   n % 10 === 1 && n % 100 !== 11 ? one
     : n % 10 >= 2 && n % 10 <= 4 && (n % 100 < 12 || n % 100 > 14) ? few : many

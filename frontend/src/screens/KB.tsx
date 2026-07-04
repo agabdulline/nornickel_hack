@@ -430,8 +430,21 @@ function DocStatus({ d }: { d: KbDoc }) {
   )
 }
 
-/** Попап перед загрузкой: сколько займёт индексация и на чём построен поиск. */
-function UploadInfoModal({ onPick, onClose }: { onPick: () => void; onClose: () => void }) {
+/** Попап перед загрузкой: сколько займёт индексация и на чём построен поиск.
+ *  Файл можно выбрать кнопкой или просто перетащить в зону. */
+function UploadInfoModal({ onPick, onFiles, onClose }: {
+  onPick: () => void; onFiles: (files: File[]) => void; onClose: () => void
+}) {
+  const [drag, setDrag] = useState(false)
+  const [dropErr, setDropErr] = useState('')
+
+  const takeFiles = (list: FileList) => {
+    const ok = Array.from(list).filter(f => /\.(pdf|txt)$/i.test(f.name))
+    if (ok.length === 0) { setDropErr('Поддерживаются PDF и TXT'); return }
+    setDropErr('')
+    onFiles(ok)
+  }
+
   const Row = ({ kind, time, note }: { kind: string; time: string; note?: string }) => (
     <tr>
       <td className="py-1 pr-3">{kind}</td>
@@ -475,6 +488,24 @@ function UploadInfoModal({ onPick, onClose }: { onPick: () => void; onClose: () 
             <li><b>Бесплатная и без лимитов</b> — индексировать можно
               тысячи документов.</li>
           </ul>
+        </div>
+        {/* дроп-зона: перетащить PDF/TXT прямо сюда */}
+        <div
+          onDragOver={e => { e.preventDefault(); setDrag(true) }}
+          onDragLeave={() => setDrag(false)}
+          onDrop={e => { e.preventDefault(); setDrag(false); takeFiles(e.dataTransfer.files) }}
+          onClick={onPick}
+          className={'rounded-lg border-2 border-dashed p-5 text-center cursor-pointer ' +
+            'transition-colors select-none ' +
+            (drag ? 'border-brand bg-brand-tint' : 'border-line hover:border-brand')}>
+          <Icon name="upload" className="w-6 h-6 mx-auto mb-1.5 text-faint" />
+          <div className="font-medium">
+            {drag ? 'Отпустите — начнём индексацию' : 'Перетащите PDF или TXT сюда'}
+          </div>
+          <div className="text-xs mt-0.5" style={{ color: 'var(--c-faint)' }}>
+            или нажмите, чтобы выбрать файл
+          </div>
+          {dropErr && <div className="text-xs mt-1.5 text-danger">{dropErr}</div>}
         </div>
         <div className="flex justify-end gap-2 pt-1">
           <button className="btn" onClick={onClose}>Отмена</button>
@@ -737,7 +768,11 @@ export default function KB() {
       {preview && <DocPreviewModal doc={preview} onClose={() => setPreview(null)} />}
       {uploadInfo && (
         <UploadInfoModal onClose={() => setUploadInfo(false)}
-          onPick={() => { setUploadInfo(false); fileRef.current?.click() }} />
+          onPick={() => { setUploadInfo(false); fileRef.current?.click() }}
+          onFiles={async fs => {
+            setUploadInfo(false)
+            for (const f of fs) await upload(f)   // последовательно: не душим индексатор
+          }} />
       )}
     </div>
   )

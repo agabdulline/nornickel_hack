@@ -212,6 +212,10 @@ def test_kb_document_file_endpoint(tmp_path, monkeypatch):
         assert r.status_code == 200
         assert "флотация" in r.text.lower()
         assert client.get("/api/kb/documents/d1/preview").json()["has_file"] is True
+        # чанк тоже сообщает о наличии исходника — для вкладки в модалке цитаты
+        chunk_id = idx.chunks[0]["chunk_id"]
+        cr = client.get(f"/api/kb/chunk/{chunk_id}").json()
+        assert cr["has_file"] is True and cr["doc_id"] == "d1"
         assert client.get("/api/kb/documents/нет/file").status_code == 404
     finally:
         app.dependency_overrides.clear()

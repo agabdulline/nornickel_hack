@@ -280,12 +280,17 @@ export function Modal({ title, onClose, children, wide = false }: {
   )
 }
 
-/** Модалка с текстом чанка-источника (клик по цитате). */
+/** Модалка источника цитаты: «Текст» — фрагмент с подсветкой цитаты,
+ * «Исходник» — оригинальный PDF, открытый на странице цитаты. */
 export function ChunkModal({ chunkId, quote, onClose }:
   { chunkId: string; quote?: string; onClose: () => void }) {
-  const [chunk, setChunk] = useState<{ text: string; source: string; page_start: number } | null>(null)
+  const [chunk, setChunk] = useState<{
+    doc_id: string; text: string; source: string; page_start: number; has_file?: boolean
+  } | null>(null)
+  const [mode, setMode] = useState<'text' | 'file'>('text')
   const [err, setErr] = useState('')
   useEffect(() => {
+    setMode('text')
     api.kbChunk(chunkId).then(setChunk).catch(e => setErr(String(e)))
   }, [chunkId])
 
@@ -303,12 +308,32 @@ export function ChunkModal({ chunkId, quote, onClose }:
     </>)
   }
 
+  const isPdf = chunk?.source.toLowerCase().endsWith('.pdf')
   return (
-    <Modal title={chunk ? `${chunk.source}, с. ${chunk.page_start}` : chunkId} onClose={onClose}>
+    <Modal wide={mode === 'file'} onClose={onClose}
+      title={chunk ? (
+        <span className="inline-flex items-center gap-3 min-w-0">
+          <span className="truncate">{chunk.source}, с. {chunk.page_start}</span>
+          {chunk.has_file && (
+            <Segmented
+              options={[{ value: 'text', label: 'Текст' } as const,
+                        { value: 'file', label: isPdf ? 'Исходник (PDF)' : 'Исходник' } as const]}
+              value={mode} onChange={setMode} />
+          )}
+        </span>
+      ) : chunkId}>
       {err && <ErrorBox error={err} />}
-      <div className="text-sm whitespace-pre-wrap leading-relaxed" style={{ color: 'var(--c-text)' }}>
-        {chunk ? hl(chunk.text) : 'Загрузка…'}
-      </div>
+      {mode === 'file' && chunk?.has_file ? (
+        <iframe title={`Исходник: ${chunk.source}`}
+          src={`/api/kb/documents/${encodeURIComponent(chunk.doc_id)}/file`
+            + (isPdf ? `#page=${chunk.page_start}` : '')}
+          className="w-full rounded-md bg-white"
+          style={{ height: '68vh', border: '1px solid var(--c-line)' }} />
+      ) : (
+        <div className="text-sm whitespace-pre-wrap leading-relaxed" style={{ color: 'var(--c-text)' }}>
+          {chunk ? hl(chunk.text) : 'Загрузка…'}
+        </div>
+      )}
     </Modal>
   )
 }

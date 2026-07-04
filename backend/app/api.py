@@ -710,7 +710,8 @@ def kb_chunk(chunk_id: str, kb: KBIndex = Depends(get_kb)) -> dict:
     c = kb.get_chunk(chunk_id)
     if not c:
         raise HTTPException(404, "чанк не найден")
-    return c
+    # has_file — фронт показывает вкладку «Исходник» (PDF на нужной странице)
+    return {**c, "has_file": _kb_source_file(c["source"], c["doc_id"]) is not None}
 
 
 class AskIn(BaseModel):

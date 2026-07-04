@@ -168,8 +168,10 @@ export const api = {
         body: JSON.stringify({ question }),
       })),
   kbChunk: (chunkId: string) =>
-    j<{ chunk_id: string; text: string; source: string; page_start: number }>(
-      fetch(`/api/kb/chunk/${encodeURIComponent(chunkId)}`)),
+    j<{
+      chunk_id: string; doc_id: string; text: string; source: string
+      page_start: number; page_end?: number; has_file?: boolean
+    }>(fetch(`/api/kb/chunk/${encodeURIComponent(chunkId)}`)),
 }
 
 export const fmt = {

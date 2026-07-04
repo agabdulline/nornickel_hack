@@ -361,10 +361,14 @@ def _reground_citations(hyps: list[Hypothesis], kb_index: KBIndex,
 
     picks: dict[int, tuple[str, str]] = {}
     if needy and getattr(llm, "enabled", False):
-        try:
-            picks = _semantic_pick(llm, needy)
-        except (LLMUnavailable, ValueError) as e:
-            log.warning("Смысловое пере-заземление недоступно (%s) — цитаты без замены", e)
+        # порциями: батч из 14 гипотез с кандидатами не влезает в таймаут FAST
+        for start in range(0, len(needy), 6):
+            try:
+                part = _semantic_pick(llm, needy[start:start + 6])
+                picks.update({start + k: v for k, v in part.items()})
+            except (LLMUnavailable, ValueError) as e:
+                log.warning("Смысловое пере-заземление: батч %d не удался (%s) — "
+                            "эти цитаты без замены", start // 6 + 1, e)
 
     replaced = 0
     for i, (h, cands) in enumerate(needy):

@@ -183,6 +183,16 @@ def test_reground_semantic_pick_verbatim(tmp_path):
     assert stats["validity"] == 1.0, "все оставшиеся цитаты дословны"
 
 
+def test_reground_batches_large_sets(tmp_path):
+    """Больше 6 нуждающихся гипотез — несколько батч-вызовов (таймаут FAST)."""
+    idx = _nozzle_index(tmp_path)
+    hyps = [_h(f"h{i}", f"Гипотеза номер {i} про классификацию", n_cit=0)
+            for i in range(8)]
+    llm = _PickLLM([{"n": i, "chunk_id": None, "quote": None} for i in range(6)])
+    _reground_citations(hyps, idx, llm=llm)
+    assert llm.calls == 2, "8 гипотез -> батчи 6+2"
+
+
 def test_reground_null_pick_leaves_empty(tmp_path):
     """Модель вернула null (нет обосновывающего фрагмента) — цитат нет, честно."""
     idx = _nozzle_index(tmp_path)

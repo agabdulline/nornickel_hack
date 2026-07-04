@@ -74,16 +74,27 @@ def doc_topic(texts: list[str]) -> str:
 
 
 def doc_lang(texts: list[str]) -> str:
-    """Язык документа: голосование detect_lang по чанкам, равномерно
-    рассеянным по документу (начало бывает нерепрезентативным — латинские
-    шапки патентов, оглавления). При ничьей приоритет ru > en > zh
-    (детерминированно, не зависит от порядка set)."""
+    """Язык документа по долям алфавитов во всём тексте (сэмпл до 30 чанков,
+    равномерно по документу). Голосование по чанкам здесь не работает:
+    у китайских статей английские аннотации/DOI/списки литературы перетягивают
+    большинство чанков в en. Иероглифы плотнее буквенного письма (нет пробелов,
+    один знак ≈ слово), поэтому для zh достаточно 12% CJK-знаков."""
     if not texts:
         return "ru"
     n = len(texts)
-    idxs = sorted({round(i * (n - 1) / 8) for i in range(9)}) if n > 9 else range(n)
-    votes = [detect_lang(texts[i]) for i in idxs]
-    return max(("ru", "en", "zh"), key=lambda k: (votes.count(k), k == "ru", k == "en"))
+    idxs = sorted({round(i * (n - 1) / 29) for i in range(30)}) if n > 30 else range(n)
+    sample = " ".join(texts[i][:3000] for i in idxs)
+    cyr = sum(1 for ch in sample if "а" <= ch.lower() <= "я" or ch.lower() == "ё")
+    cjk = sum(1 for ch in sample if "一" <= ch <= "鿿")
+    lat = sum(1 for ch in sample if "a" <= ch.lower() <= "z")
+    total = cyr + cjk + lat
+    if total == 0:
+        return "ru"
+    if cjk / total > 0.12:
+        return "zh"
+    # лёгкий перевес кириллице: русские статьи всегда несут английские
+    # аннотации/списки литературы, обратное почти не встречается
+    return "ru" if cyr >= lat * 0.85 else "en"
 
 
 class KBIndex:

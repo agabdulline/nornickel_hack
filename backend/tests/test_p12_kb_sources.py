@@ -337,10 +337,15 @@ def test_project_material_roundtrip(tmp_path):
     assert store.get_project(p2.id).material == "отвальные хвосты"
 
 
-def test_doc_lang_tie_deterministic():
+def test_doc_lang_shares():
+    """Доли алфавитов по документу: китайская статья с английской аннотацией —
+    zh (голосование чанков тут ошибалось), смешанный ru/en — ru."""
     from backend.app.kb.index import doc_lang
-    assert doc_lang([RU, EN]) == "ru", "при ничьей приоритет ru"
-    assert doc_lang([EN, ZH]) == "en", "затем en"
+    assert doc_lang([RU, EN]) == "ru"
+    assert doc_lang([EN, ZH]) == "zh", "заметная доля CJK — китайский документ"
+    assert doc_lang([EN, EN, EN]) == "en"
+    # реальный кейс: en-аннотация + китайское тело
+    assert doc_lang([EN, ZH, ZH, ZH]) == "zh"
 
 
 def test_kb_document_file_endpoint(tmp_path, monkeypatch):

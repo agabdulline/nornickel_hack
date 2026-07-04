@@ -252,6 +252,39 @@ def test_kb_translate_endpoint(tmp_path, monkeypatch):
         app.dependency_overrides.clear()
 
 
+def test_kb_translate_rejects_wrong_language(tmp_path, monkeypatch):
+    """Модель перепутала целевой язык (реальный сбой flash: перевод на
+    китайский) — не-русский результат отбрасывается и не кэшируется."""
+    import json as _json
+
+    import backend.app.kb.translate as tr
+    from backend.app.llm import LLMClient  # noqa: F401
+
+    monkeypatch.setattr(tr, "STORAGE", tmp_path / "st")
+    monkeypatch.setattr(tr, "_CACHE", None)
+
+    idx = KBIndex(root=tmp_path / "kb", use_dense=False)
+    pages = [(1, EN)]
+    idx.add_document("d1", "flotation.pdf", pages, chunk_pages(pages, target=200))
+    cid = idx.chunks[0]["chunk_id"]
+
+    class ZhLLM:  # всегда отвечает по-китайски, и на ретрае тоже
+        enabled = True
+        calls = 0
+
+        def chat(self, messages, strong=False, json_mode=False):
+            ZhLLM.calls += 1
+            return {"content": _json.dumps(
+                {"translations": [{"n": 0, "text": "硫化矿浮选性能预测模型研究"}]},
+                ensure_ascii=False)}
+
+    got = tr.translate_chunks([cid], idx, ZhLLM())
+    assert cid not in got, "китайский «перевод» отброшен"
+    assert ZhLLM.calls == 2, "основной вызов + один ретрай"
+    # и в кэш не попал
+    assert not any("硫" in v for v in (tr._CACHE or {}).values())
+
+
 def test_doc_lang_tie_deterministic():
     from backend.app.kb.index import doc_lang
     assert doc_lang([RU, EN]) == "ru", "при ничьей приоритет ru"

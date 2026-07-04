@@ -16,21 +16,31 @@ import threading
 
 from ..config import STORAGE
 from ..llm import LLMClient, LLMUnavailable, extract_json
-from .index import KBIndex
+from .index import KBIndex, detect_lang
 
 log = logging.getLogger("kb.translate")
 
 _LOCK = threading.Lock()
 _CACHE: dict[str, str] | None = None
 
-TRANSLATE_SYSTEM = """Ты — технический переводчик в области обогащения полезных
-ископаемых. Переведи фрагменты статей на русский язык. Требования:
-- термины отрасли переводи корректно (hydrocyclone apex/spigot — песковая
-  насадка гидроциклона; grinding media — мелющие тела; cut size — граница
-  разделения; underflow/overflow — пески/слив; 浮选 — флотация и т.п.);
-- числа, единицы, обозначения и ссылки на рисунки/таблицы сохраняй как есть;
+TRANSLATE_SYSTEM = """ЦЕЛЕВОЙ ЯЗЫК: РУССКИЙ. Каждый text в ответе должен быть
+написан по-русски кириллицей, независимо от языка оригинала (английский,
+китайский) и национальности авторов.
+
+Ты — технический переводчик в области обогащения полезных ископаемых.
+Переведи фрагменты статей НА РУССКИЙ. Требования:
+- термины отрасли переводи корректно (hydrocyclone apex/spigot — «песковая
+  насадка гидроциклона»; grinding media — «мелющие тела»; cut size — «граница
+  разделения»; underflow/overflow — «пески»/«слив»; термин 浮选 — «флотация»);
+- числа, единицы, обозначения, DOI и ссылки на рисунки/таблицы сохраняй как есть;
+- имена авторов можно оставить латиницей;
 - переводи весь фрагмент, ничего не сокращая и не добавляя.
-Ответ строго JSON: {"translations": [{"n": 0, "text": "перевод"}, ...]}"""
+Ответ строго JSON: {"translations": [{"n": 0, "text": "перевод на русском"}, ...]}"""
+
+
+def _is_ru(text: str) -> bool:
+    """Перевод обязан быть русским — flash иногда путает целевой язык."""
+    return detect_lang(text) == "ru"
 
 
 def _cache_path():
@@ -71,7 +81,9 @@ def translate_chunks(chunk_ids: list[str], kb: KBIndex, llm: LLMClient) -> dict[
             if not chunk:
                 continue
             k = _key(cid, chunk["text"])
-            if k in cache:
+            # кэш валидируем и при чтении: отравленная запись (не-русский
+            # перевод от сбойного вызова) перезапрашивается, а не отдаётся
+            if k in cache and _is_ru(cache[k]):
                 out[cid] = cache[k]
             else:
                 todo.append((cid, chunk["text"]))
@@ -106,6 +118,19 @@ def translate_chunks(chunk_ids: list[str], kb: KBIndex, llm: LLMClient) -> dict[
         with ThreadPoolExecutor(max_workers=min(4, len(batches))) as pool:
             results = list(pool.map(one_batch, batches))
         got = {cid: text for res in results for cid, text in res.items()}
+
+        # переводы не по-русски отбрасываем; один ретрай для отклонённых
+        bad = [cid for cid, t in got.items() if not _is_ru(t)]
+        if bad:
+            log.warning("Перевод: %d фрагментов не на русском — ретрай", len(bad))
+            text_by = dict(todo)
+            retry = one_batch([(cid, text_by[cid]) for cid in bad])
+            for cid in bad:
+                if cid in retry and _is_ru(retry[cid]):
+                    got[cid] = retry[cid]
+                else:
+                    got.pop(cid, None)
+
         text_by_cid = dict(todo)
         with _LOCK:
             for cid, tr_text in got.items():

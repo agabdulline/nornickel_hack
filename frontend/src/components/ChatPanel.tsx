@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { api, fmt } from '../api'
+import { requestHighlight } from '../highlight'
 import type { ChatChart, ChatMeta, ChatReference } from '../types'
 import { ChunkModal, Icon, Chip, SectionLabel } from './common'
 
@@ -74,26 +75,47 @@ function matchRef(inner: string, refs: ChatReference[]): ChatReference | null {
   return partial ? { ...partial } : null
 }
 
-/** Текст ответа: **жирный** и кликабельные [ссылки] прямо в тексте. */
+function RefLink({ label, refTarget, onRef }: {
+  label: string; refTarget: ChatReference; onRef: (r: ChatReference) => void
+}) {
+  return (
+    <button type="button" onClick={() => onRef(refTarget)}
+      className="underline decoration-dotted underline-offset-2 cursor-pointer
+        font-medium hover:opacity-80 text-left break-words"
+      style={{ color: 'var(--c-brand)' }}>
+      {label}
+    </button>
+  )
+}
+
+/** Текст ответа: **жирный** и кликабельные [ссылки] прямо в тексте.
+ *  Составная скобка [R1, +125/…, −125+71/…] разбивается на отдельные ссылки. */
 function RichText({ text, refs, onRef }: {
   text: string; refs: ChatReference[]; onRef: (r: ChatReference) => void
 }) {
-  const parts = text.split(/(\[[^\][\n]{1,90}\]|\*\*[^*\n]+\*\*)/g)
+  const parts = text.split(/(\[[^\][\n]{1,160}\]|\*\*[^*\n]+\*\*)/g)
   return (
     <>
       {parts.map((p, i) => {
         if (p.startsWith('**') && p.endsWith('**')) return <b key={i}>{p.slice(2, -2)}</b>
         if (p.startsWith('[') && p.endsWith(']')) {
           const inner = p.slice(1, -1)
-          const ref = matchRef(inner, refs)
-          if (ref) return (
-            <button key={i} type="button" onClick={() => onRef(ref)}
-              className="underline decoration-dotted underline-offset-2 cursor-pointer
-                font-medium hover:opacity-80 text-left break-all"
-              style={{ color: 'var(--c-brand)' }}>
-              {inner}
-            </button>
-          )
+          const single = matchRef(inner, refs)
+          if (single) return <RefLink key={i} label={inner} refTarget={single} onRef={onRef} />
+          const pieces = inner.split(/\s*[,;]\s*/)
+          if (pieces.length > 1) {
+            const matched = pieces.map(x => [x, matchRef(x, refs)] as const)
+            if (matched.some(([, r]) => r)) return (
+              <span key={i}>
+                {matched.map(([label, r], k) => (
+                  <span key={k}>
+                    {k > 0 && ', '}
+                    {r ? <RefLink label={label} refTarget={r} onRef={onRef} /> : label}
+                  </span>
+                ))}
+              </span>
+            )
+          }
         }
         return <span key={i}>{p}</span>
       })}
@@ -263,10 +285,11 @@ export default function ChatPanel({ pid, onClose }: { pid?: string; onClose: () 
   }
 
   const openRef = (r: ChatReference) => {
-    if (r.type === 'chunk') setChunk(r.id)
-    else if (!pid) return
-    else if (r.type === 'hypothesis') nav(`/p/${pid}/hypotheses`)
-    else nav(`/p/${pid}/map`)
+    if (r.type === 'chunk') { setChunk(r.id); return }
+    if (!pid) return
+    // экран подсветит цель на ~5 секунд (см. highlight.ts)
+    requestHighlight({ type: r.type, id: r.id })
+    nav(r.type === 'hypothesis' ? `/p/${pid}/hypotheses` : `/p/${pid}/map`)
   }
 
   const refLabel = (r: ChatReference) =>

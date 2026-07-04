@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { api, fmt, fxLabel, fxReady } from '../api'
+import { useChatHighlight } from '../highlight'
 import type { Hypothesis } from '../types'
 import {
   Badge, CapexBadge, ChunkModal, EmptyBox, ErrorBox, Icon, Meter, PageHeader, Panel,
@@ -113,6 +114,9 @@ export default function Hypotheses() {
     const ms = (hyps ?? []).map(h => h.effect.money_usd)
     return ms.length ? [Math.min(...ms), Math.max(...ms)] : [0, 0]
   }, [hyps])
+
+  // подсветка карточки, на которую указал ассистент в чате
+  useChatHighlight(hyps !== null)
 
   const feedback = async (h: Hypothesis, action: 'accept' | 'reject') => {
     let reason = ''
@@ -309,7 +313,8 @@ function HypCard({ h, rank, onFeedback, onChunk, weights, moneyLo, moneyHi }: {
       : undefined
 
   return (
-    <div className={`card hover-lift ${h.status === 'rejected' ? 'opacity-60' : ''}`} style={accent}>
+    <div data-hl={`hypothesis:${h.id}`}
+      className={`card hover-lift ${h.status === 'rejected' ? 'opacity-60' : ''}`} style={accent}>
       <div className="p-3 flex items-start gap-3 cursor-pointer" onClick={() => setOpen(o => !o)}>
         <div className="num text-2xl font-bold w-8 text-right shrink-0 text-faint">{rank}</div>
         <div className="flex-1 min-w-0">

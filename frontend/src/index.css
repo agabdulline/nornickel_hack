@@ -326,3 +326,16 @@ input[type="range"] { accent-color: var(--c-brand); }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: .001ms !important; transition-duration: .001ms !important; }
 }
+
+/* подсветка цели, на которую указал ассистент в чате (см. highlight.ts):
+   кольцо цветом бренда, гаснет к концу ~5 секунд */
+@keyframes hl-flash {
+  0%   { box-shadow: 0 0 0 3px var(--c-brand), 0 0 0 9px color-mix(in srgb, var(--c-brand) 22%, transparent); }
+  70%  { box-shadow: 0 0 0 3px var(--c-brand), 0 0 0 9px color-mix(in srgb, var(--c-brand) 22%, transparent); }
+  100% { box-shadow: 0 0 0 0 transparent, 0 0 0 0 transparent; }
+}
+.flash-highlight {
+  animation: hl-flash 5s ease-out;
+  position: relative; z-index: 5;
+  border-radius: var(--radius-md, 8px);
+}

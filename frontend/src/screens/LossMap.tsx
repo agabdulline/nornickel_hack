@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { api, fmt } from '../api'
+import { HIGHLIGHT_EVENT, peekPending, useChatHighlight } from '../highlight'
 import type { DiagnosticsResult, FlowsheetData, FlowsheetNode, TailingsReport } from '../types'
 import {
   Badge, EmptyBox, ErrorBox, Icon, Modal, PageHeader, Panel, SectionLabel, Segmented, Spinner,
@@ -151,7 +152,8 @@ function HeatTable({ el, diag }: { el: 'Ni' | 'Cu'; diag: DiagnosticsResult }) {
                       ? `rgba(var(--heat), ${(0.06 + alpha * 0.55).toFixed(3)})`
                       : `rgba(var(--heat-inert), ${(0.04 + alpha * 0.28).toFixed(3)})`
                     return (
-                      <td key={f} title={`${c} / ${f} / ${el}: ${fmt.t(cell.tonnes)} т` +
+                      <td key={f} data-hl={`cell:${c}/${f}/${el}`}
+                        title={`${c} / ${f} / ${el}: ${fmt.t(cell.tonnes)} т` +
                         (cell.share_pct != null ? ` (${fmt.pct(cell.share_pct)})` : '') +
                         (cell.recoverable ? ' · извлекаемо' : ' · НЕизвлекаемо') +
                         (cell.provenance !== 'measured' ? ` · ${cell.provenance}` : '')}
@@ -222,6 +224,20 @@ export default function LossMap() {
   const report = useMemo(() =>
     reports?.find(r => r.tail_type === tailType) ?? reports?.[0], [reports, tailType])
 
+  // подсветка цели, на которую указал ассистент; если цель — ячейка другого
+  // элемента (…/Cu при открытом Ni), сперва переключаем вкладку
+  useEffect(() => {
+    const sync = () => {
+      const t = peekPending()
+      const m = t?.type === 'cell' ? t.id.match(/\/(Ni|Cu)$/) : null
+      if (m) setEl(m[1] as 'Ni' | 'Cu')
+    }
+    sync()
+    window.addEventListener(HIGHLIGHT_EVENT, sync)
+    return () => window.removeEventListener(HIGHLIGHT_EVENT, sync)
+  }, [])
+  useChatHighlight(!!diag, [el])
+
   if (err) return <ErrorBox error={err.includes('не загружен') ?
     'Отчёт ещё не загружен — начните с шага «1 · Данные».' : err} />
   if (!report || !diag) return <Spinner />
@@ -280,7 +296,8 @@ export default function LossMap() {
                 {diagnoses.map(d => {
                   const key = d.rule_id + d.element
                   return (
-                    <div key={key} className="card p-3 space-y-2 animate-in flex flex-col h-full">
+                    <div key={key} data-hl={`rule:${d.rule_id}`}
+                      className="card p-3 space-y-2 animate-in flex flex-col h-full">
                       <div className="flex items-center gap-2">
                         <button type="button" title="показать правило" className="shrink-0"
                           onClick={() => setOpenRule(openRule === key ? null : key)}>

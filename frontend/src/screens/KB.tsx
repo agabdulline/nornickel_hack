@@ -410,6 +410,63 @@ function DocStatus({ d }: { d: KbDoc }) {
   )
 }
 
+/** Попап перед загрузкой: сколько займёт индексация и на чём построен поиск. */
+function UploadInfoModal({ onPick, onClose }: { onPick: () => void; onClose: () => void }) {
+  const Row = ({ kind, time, note }: { kind: string; time: string; note?: string }) => (
+    <tr>
+      <td className="py-1 pr-3">{kind}</td>
+      <td className="py-1 pr-3 num font-semibold whitespace-nowrap">{time}</td>
+      <td className="py-1 text-faint">{note}</td>
+    </tr>
+  )
+  return (
+    <Modal title="Загрузка источника в базу знаний" onClose={onClose}>
+      <div className="space-y-4 text-sm leading-relaxed">
+        <div>
+          <SectionLabel>Сколько займёт индексация</SectionLabel>
+          <table className="w-full text-sm">
+            <tbody>
+              <Row kind="Статья (5–20 стр)" time="~0.5–1 мин" />
+              <Row kind="Книга 100 стр" time="~5–6 мин" note="вкладку не закрывать" />
+              <Row kind="Книга 200 стр" time="~10–12 мин" note="вкладку не закрывать" />
+              <Row kind="Скан без текста" time="+~1 стр/сек"
+                note="распознавание идёт фоном, прогресс в списке" />
+              <Row kind="Английский / китайский" time="+ перевод фоном"
+                note="вкладка «По-русски» появится через пару минут" />
+            </tbody>
+          </table>
+          <div className="text-xs text-faint mt-1.5">
+            Время уходит на векторизацию фрагментов (~2 с/фрагмент на CPU сервера);
+            разбор PDF — секунды.
+          </div>
+        </div>
+        <div>
+          <SectionLabel>Как устроен поиск</SectionLabel>
+          <p>
+            Эмбеддинги — <b>BAAI/bge-m3</b> (открытая мультиязычная модель,
+            1024-мерные вектора), гибрид с BM25 по точным терминам. Почему она:
+          </p>
+          <ul className="list-disc ml-5 mt-1.5 space-y-1">
+            <li><b>Локальная</b> — база знаний не зависит от внешних API
+              (проверено на практике: облачный эмбеддинг-сервис в один из дней
+              лежал, наш поиск не заметил);</li>
+            <li><b>Кросс-языковая</b> — русский запрос находит английские и
+              китайские источники без перевода (100+ языков);</li>
+            <li><b>Бесплатная и без лимитов</b> — индексировать можно
+              тысячи документов.</li>
+          </ul>
+        </div>
+        <div className="flex justify-end gap-2 pt-1">
+          <button className="btn" onClick={onClose}>Отмена</button>
+          <button className="btn btn-primary" onClick={onPick}>
+            <Icon name="upload" className="w-4 h-4" /> Выбрать файл
+          </button>
+        </div>
+      </div>
+    </Modal>
+  )
+}
+
 export default function KB() {
   const [docs, setDocs] = useState<KbDoc[]>([])
   const [err, setErr] = useState('')
@@ -426,6 +483,7 @@ export default function KB() {
   const [docQuery, setDocQuery] = useState('')
   // темы свёрнуты по умолчанию — раскрываются кликом («подробнее»)
   const [openTopics, setOpenTopics] = useState<Set<string>>(new Set())
+  const [uploadInfo, setUploadInfo] = useState(false)
   const fileRef = useRef<HTMLInputElement>(null)
 
   const load = () => api.kbDocs().then(setDocs).catch(e => setErr(String(e)))
@@ -551,7 +609,7 @@ export default function KB() {
               }))}
               value={langTab} onChange={setLangTab} />
             <button className="btn btn-primary btn-sm" disabled={uploading}
-              onClick={() => fileRef.current?.click()}>
+              onClick={() => setUploadInfo(true)}>
               <Icon name="upload" className="w-4 h-4" />
               {uploading ? 'Индексирую…' : 'Загрузить PDF/TXT'}
             </button>
@@ -657,6 +715,10 @@ export default function KB() {
 
       {chunk && <ChunkModal chunkId={chunk} onClose={() => setChunk(null)} />}
       {preview && <DocPreviewModal doc={preview} onClose={() => setPreview(null)} />}
+      {uploadInfo && (
+        <UploadInfoModal onClose={() => setUploadInfo(false)}
+          onPick={() => { setUploadInfo(false); fileRef.current?.click() }} />
+      )}
     </div>
   )
 }

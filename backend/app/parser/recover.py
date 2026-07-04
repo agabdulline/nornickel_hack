@@ -193,7 +193,8 @@ def recover_llm(report: TailingsReport, llm: LLMClient | None = None) -> int:
     except (LLMUnavailable, ValueError) as e:
         report.issues.append(DataIssue(
             severity="warning", rule="recover",
-            message=f"Ярус 2 (LLM) недоступен: {e}. {len(cells)} ячеек не восстановлены — проверьте вручную"))
+            message=f"Ярус 2 (LLM) недоступен: {e}. Битых ячеек: {len(cells)} — "
+                    f"проверьте и впишите вручную"))
         return 0
 
     est = {(x.get("size_class"), x.get("mineral_form"), x.get("element")): x
@@ -214,8 +215,9 @@ def recover_llm(report: TailingsReport, llm: LLMClient | None = None) -> int:
         c.recovery_note = f"LLM-оценка: {x.get('explanation', '')} (confidence={c.confidence:.2f})"
         report.issues.append(DataIssue(
             severity="warning", rule="recover", cell=c.key,
-            message=f"Восстановлено (ярус 2, LLM): {c.key} ≈ {share:.2f}% "
-                    f"(confidence {c.confidence:.2f}) — проверьте вручную"))
+            message=f"Оценка LLM (ярус 2): {c.key} ≈ {share:.2f}% "
+                    f"(confidence {c.confidence:.2f}) — проверьте и при необходимости "
+                    f"впишите вручную"))
         recovered += 1
     return recovered
 

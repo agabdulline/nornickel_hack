@@ -149,7 +149,8 @@ def _num_or_none(cell, report: TailingsReport | None, where: str,
     issue = DataIssue(
         severity="error", rule="parser", cell=where,
         message=f"Битое значение в {coord} ({where}): "
-                f"{'#REF!/ошибка формулы' if kind == 'broken' else 'не число'} — требует восстановления")
+                f"{'#REF!/ошибка формулы' if kind == 'broken' else 'не число'} — "
+                f"проверьте и впишите вручную")
     if report is not None:
         report.issues.append(issue)
     return None

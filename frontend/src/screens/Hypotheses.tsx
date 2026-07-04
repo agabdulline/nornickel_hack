@@ -200,7 +200,7 @@ function HypCard({ h, rank, onFeedback, onChunk }: {
             {expertMatch && (
               <Badge tone="ok"><Icon name="check" className="w-3 h-3" />Совпадает с гипотезой экспертов</Badge>
             )}
-            {h.uncertain && <Badge tone="warn">оценка на восстановленных данных</Badge>}
+            {h.uncertain && <Badge tone="warn">оценка на непроверенных данных</Badge>}
             {h.status === 'accepted' && <Badge tone="solid">принята</Badge>}
             {h.status === 'rejected' && <Badge tone="danger">отклонена</Badge>}
           </div>

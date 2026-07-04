@@ -80,8 +80,8 @@ export default function Report() {
             Загрузите отчёт института по хвостам (.xlsx)
           </div>
           <div className="text-sm text-muted mb-5">
-            Битые значения (<span className="num">#REF!</span>) не страшны — система
-            восстановит их и подсветит.
+            Битые значения (<span className="num">#REF!</span>) система подсветит —
+            проверьте их и впишите вручную.
           </div>
           <input ref={fileRef} type="file" accept=".xlsx" className="hidden"
             onChange={e => e.target.files?.[0] && upload(e.target.files[0])} />
@@ -138,12 +138,13 @@ export default function Report() {
             <Icon name="alert" className="w-4 h-4" />
           </span>
           <span className="text-sm text-warn">
-            Восстановлено <span className="num font-semibold">{recovered.length}</span> значений —
-            проверьте (пунктирные ячейки, тултип с формулой)
+            Битых значений (<span className="num">#REF!</span>):{' '}
+            <span className="num font-semibold">{recovered.length}</span> —
+            проверьте и впишите вручную (пунктирные ячейки, клик для правки)
           </span>
           <button className="btn btn-ok btn-sm ml-auto" onClick={acceptAllRecovered}>
             <Icon name="check" />
-            Принять все восстановленные
+            Принять текущие значения
           </button>
         </div>
       )}
@@ -225,15 +226,16 @@ export default function Report() {
                       {FORMS.map(f => {
                         const c = byForm[f]
                         if (!c) return <td key={f} className="text-right text-faint">—</td>
-                        const rec = c.provenance !== 'measured'
+                        const rec = c.provenance === 'recovered_math' || c.provenance === 'recovered_llm'
                         return (
                           <td key={f}
                             className={'num text-right cursor-pointer transition-colors hover:bg-brand-tint ' +
                               (rec ? 'recovered-cell ' : '') +
                               (!c.recoverable ? 'text-faint' : '')}
                             title={(rec
-                              ? `Восстановлено (${c.provenance}${c.confidence != null
-                                ? `, confidence ${c.confidence}` : ''}): ${c.recovery_note ?? ''}. Проверьте вручную. `
+                              ? `Требует проверки${c.confidence != null
+                                ? ` (confidence ${c.confidence})` : ''}: ${c.recovery_note ?? 'битое значение (#REF!)'}. `
+                                + 'Впишите значение вручную (клик по ячейке). '
                               : '') + `${s.label}/${f}/${el}` +
                               (c.provenance === 'manual' ? ' · правка пользователя' : '')}
                             onClick={() => editCell(c)}>
@@ -251,7 +253,7 @@ export default function Report() {
         <SectionLabel>
           <span className="inline-flex items-center gap-1.5 mt-2">
             <span className="recovered-cell inline-block w-3 h-3 rounded-sm" />
-            восстановленные значения · 🔒 неизвлекаемые формы приглушены
+            значения для проверки — впишите вручную · 🔒 неизвлекаемые формы приглушены
           </span>
         </SectionLabel>
       </Panel>

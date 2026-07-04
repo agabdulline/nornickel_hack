@@ -137,7 +137,7 @@ function HeatTable({ el, diag }: { el: 'Ni' | 'Cu'; diag: DiagnosticsResult }) {
       </div>
       <div className="text-xs mt-2" style={{ color: 'var(--c-faint)' }}>
         интенсивность = тонны потерь · 🔒 приглушённые колонки — неизвлекаемые формы ·
-        янтарный пунктир — восстановленные значения
+        янтарный пунктир — значения для проверки
       </div>
     </>
   )

@@ -94,7 +94,8 @@ def test_summarize_for_prompt():
     assert any("ДМДК" in str(n.get("реагенты_г_т", {})) for n in s["узлы"])
     assert s["хвостовые_потоки"], "хвостовые потоки — мишени диагнозов"
     assert any(t.get("eps_ni") == 28.0 for t in s["хвостовые_потоки"])
-    assert summarize_for_prompt("КГМК") is None  # схемы нет — мягкая деградация
+    s_kgmk = summarize_for_prompt("КГМК")
+    assert s_kgmk and s_kgmk["хвостовые_потоки"], "КГМК оцифрован: хвостовые мишени есть"
     assert summarize_for_prompt(None) is None
 
 
@@ -115,14 +116,26 @@ def test_zero_reagent_hints_with_kb():
     assert zero_reagent_hints("ТОФ", kb_index=EmptyKB()) == []
     assert zero_reagent_hints("КГМК", kb_index=FakeKB()) == []
 
-def test_kgmk_stub_flowsheet_images_only():
-    """КГМК: граф не оцифрован — заглушка с исходными изображениями.
-    UI показывает картинки, пайплайн деградирует мягко (без узлов/промпта)."""
+def test_kgmk_flowsheet_digitized():
+    """КГМК оцифрован со Схем 1-2 (18 vision-агентов + сверка Yandex OCR):
+    дробление с металлобалансом, ИФЦ, гравитация Нельсона, 4 отвальных потока."""
     fs = get_flowsheet("КГМК")
-    assert fs is not None
     assert fs["source_files"] == ["Схема 1.png", "Схема 2.png"]
-    assert fs["nodes"] == [] and fs["streams"] == []
-    assert summarize_for_prompt("КГМК") is None          # в промпт не попадает
-    assert nodes_for_rule("R1", fs) == []                # диагнозы без node_refs
+    names = {n["id"]: n for n in fs["nodes"]}
+    # дробильный цех: 3 стадии + мокрое грохочение Sibra
+    assert "kgmk_crush_1" in names and "КМД 2200Т" in names["kgmk_crush_3"]["name"]
+    # гравитация — комплексы Нельсона (нет у НОФ/ТОФ)
+    assert any(n["type"] == "gravity" for n in fs["nodes"])
+    # металлобаланс дробления: руда карьера/шахты с β по меди и никелю
+    feed = [s for s in fs["streams"] if s["kind"] == "feed" and s.get("beta_ni")]
+    assert any(s["gamma"] == 52.6 and s["beta_ni"] == 0.22 for s in feed)
+    # отвальные хвосты: слив ГЦ, IV Нельсон, медистый цикл (+ внутрицикловые)
+    tails = [s for s in fs["streams"] if s["kind"] == "tails"]
+    assert len([s for s in tails if s["to"] == "отвал"]) == 3
+    # диагнозы получают привязку к переделам
+    assert nodes_for_rule("R1", fs)
+    assert nodes_for_rule("R2", fs)
+    # правило честности: режимы на схемах КГМК не подписаны -> null
+    assert all(n["t_min"] is None and n["reagents"] is None for n in fs["nodes"])
     from backend.app.flowsheet import factories_available
     assert "КГМК" in factories_available()

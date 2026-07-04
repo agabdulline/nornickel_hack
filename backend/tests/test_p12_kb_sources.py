@@ -186,3 +186,33 @@ def test_doc_lang_tie_deterministic():
     from backend.app.kb.index import doc_lang
     assert doc_lang([RU, EN]) == "ru", "при ничьей приоритет ru"
     assert doc_lang([EN, ZH]) == "en", "затем en"
+
+
+def test_kb_document_preview_endpoint(tmp_path):
+    """Превью источника: постраничный срез чанков через API."""
+    from fastapi.testclient import TestClient
+
+    import backend.app.api as api
+    from backend.app.main import app
+
+    idx = KBIndex(root=tmp_path, use_dense=False)
+    pages = [(p, f"Страница {p}. " + RU) for p in range(1, 6)]
+    idx.add_document("d1", "книга.pdf", pages, chunk_pages(pages, target=150))
+    app.dependency_overrides[api.get_kb] = lambda: idx
+    try:
+        client = TestClient(app)
+        r = client.get("/api/kb/documents/d1/preview?offset=0&limit=3")
+        assert r.status_code == 200
+        data = r.json()
+        assert data["source"] == "книга.pdf"
+        assert len(data["chunks"]) == 3
+        assert data["total_chunks"] == len([c for c in idx.chunks if c["doc_id"] == "d1"])
+        assert data["chunks"][0]["page_start"] == 1
+        # вторая страница среза продолжает с offset
+        r2 = client.get("/api/kb/documents/d1/preview?offset=3&limit=3")
+        ids1 = {c["chunk_id"] for c in data["chunks"]}
+        ids2 = {c["chunk_id"] for c in r2.json()["chunks"]}
+        assert not ids1 & ids2, "срезы не пересекаются"
+        assert client.get("/api/kb/documents/нет/preview").status_code == 404
+    finally:
+        app.dependency_overrides.clear()

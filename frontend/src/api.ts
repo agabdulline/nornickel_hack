@@ -146,6 +146,12 @@ export const api = {
     fd.append('file', file)
     return j<KbDoc>(fetch('/api/kb/upload', { method: 'POST', body: fd }))
   },
+  kbDocPreview: (docId: string, offset = 0, limit = 6) =>
+    j<{
+      doc_id: string; source: string; pages: number; status: string
+      total_chunks: number; offset: number
+      chunks: { chunk_id: string; page_start: number; page_end: number; text: string }[]
+    }>(fetch(`/api/kb/documents/${encodeURIComponent(docId)}/preview?offset=${offset}&limit=${limit}`)),
   kbSetEnabled: (docId: string, enabled: boolean) =>
     j<KbDoc>(fetch(`/api/kb/documents/${encodeURIComponent(docId)}`, {
       method: 'PATCH', headers: { 'Content-Type': 'application/json' },

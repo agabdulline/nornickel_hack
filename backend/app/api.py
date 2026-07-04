@@ -600,6 +600,22 @@ def kb_documents(kb: KBIndex = Depends(get_kb)) -> list[dict]:
     return kb.documents()
 
 
+@router.get("/kb/documents/{doc_id}/preview")
+def kb_document_preview(doc_id: str, offset: int = 0, limit: int = 6,
+                        kb: KBIndex = Depends(get_kb)) -> dict:
+    """Постраничное чтение источника: срез чанков документа для превью в UI."""
+    if doc_id not in kb.docs:
+        raise HTTPException(404, "документ не найден")
+    part = [c for c in kb.chunks if c["doc_id"] == doc_id]
+    offset = max(0, offset)
+    sel = part[offset: offset + max(1, min(limit, 20))]
+    meta = kb.docs[doc_id]
+    return {"doc_id": doc_id, "source": meta["source"], "pages": meta.get("pages"),
+            "status": meta.get("status"), "total_chunks": len(part), "offset": offset,
+            "chunks": [{"chunk_id": c["chunk_id"], "page_start": c["page_start"],
+                        "page_end": c["page_end"], "text": c["text"]} for c in sel]}
+
+
 class KbDocPatch(BaseModel):
     enabled: bool
 

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { api } from '../api'
 import type { Equipment, KbDoc, Line, LineKind, LineMaterial, Material, LineOwnership } from '../types'
-import { Badge, ChunkModal, ErrorBox, Icon, Panel, SectionLabel } from '../components/common'
+import { Badge, ChunkModal, ErrorBox, Icon, Modal, Panel, SectionLabel, Segmented } from '../components/common'
 import {
   commitLineEdits, type DraftEquipment, type DraftMaterial, EquipmentRows, MaterialRows,
   toDraftEquipment, toDraftMaterial,
@@ -213,11 +213,56 @@ function LinesSection() {
   )
 }
 
-const LANG_GROUPS: { key: string; label: string; hint: string }[] = [
-  { key: 'ru', label: 'Русский', hint: 'учебники, статьи ГИАБ, патенты РФ' },
-  { key: 'en', label: 'English', hint: 'зарубежные статьи и справочники' },
-  { key: 'zh', label: '中文', hint: 'китайские источники' },
-]
+const LANGS = ['ru', 'en', 'zh'] as const
+type LangTab = 'all' | (typeof LANGS)[number]
+const LANG_LABEL: Record<string, string> = { ru: 'Русский', en: 'English', zh: '中文' }
+// неизвестный код языка не должен прятать документ — считаем русским
+const langOf = (d: KbDoc) => (LANGS as readonly string[]).includes(d.lang ?? '') ? d.lang! : 'ru'
+
+/** Модалка-читалка источника: чанки постранично, «Показать ещё». */
+function DocPreviewModal({ doc, onClose }: { doc: KbDoc; onClose: () => void }) {
+  const [chunks, setChunks] = useState<{ chunk_id: string; page_start: number; page_end: number; text: string }[]>([])
+  const [total, setTotal] = useState<number | null>(null)
+  const [loading, setLoading] = useState(false)
+  const [err, setErr] = useState('')
+
+  const load = (offset: number) => {
+    setLoading(true)
+    api.kbDocPreview(doc.doc_id, offset, 6)
+      .then(r => { setChunks(prev => offset === 0 ? r.chunks : [...prev, ...r.chunks]); setTotal(r.total_chunks) })
+      .catch(e => setErr(String(e)))
+      .finally(() => setLoading(false))
+  }
+  useEffect(() => { load(0) }, [doc.doc_id])
+
+  return (
+    <Modal wide onClose={onClose}
+      title={<span>{doc.source} <span className="num text-faint font-normal">— {doc.pages} стр. · {doc.chunks} фрагм.</span></span>}>
+      {err && <ErrorBox error={err} />}
+      <div className="space-y-4">
+        {chunks.map(c => (
+          <div key={c.chunk_id}>
+            <div className="num text-xs text-faint mb-1">
+              с. {c.page_start}{c.page_end !== c.page_start ? `–${c.page_end}` : ''}
+            </div>
+            <div className="text-sm whitespace-pre-wrap leading-relaxed" style={{ color: 'var(--c-text)' }}>
+              {c.text}
+            </div>
+          </div>
+        ))}
+        {total === 0 && !loading &&
+          <div className="text-faint text-sm">Текста нет — скан без распознанного слоя.</div>}
+        {total !== null && chunks.length < total && (
+          <button className="btn btn-sm" disabled={loading} onClick={() => load(chunks.length)}>
+            {loading
+              ? <span className="inline-block w-4 h-4 rounded-full border-2 border-current border-t-transparent animate-spin" />
+              : <>Показать ещё <span className="num">({chunks.length}/{total})</span></>}
+          </button>
+        )}
+      </div>
+    </Modal>
+  )
+}
 
 function DocStatus({ d }: { d: KbDoc }) {
   if (d.status === 'indexed')
@@ -257,6 +302,8 @@ export default function KB() {
     citations: { chunk_id: string; source: string; page: number; quote: string }[]
   } | null>(null)
   const [chunk, setChunk] = useState<string | null>(null)
+  const [preview, setPreview] = useState<KbDoc | null>(null)
+  const [langTab, setLangTab] = useState<LangTab>('all')
   const fileRef = useRef<HTMLInputElement>(null)
 
   const load = () => api.kbDocs().then(setDocs).catch(e => setErr(String(e)))
@@ -299,147 +346,139 @@ export default function KB() {
     catch (e) { setErr(String(e)) } finally { setAsking(false) }
   }
 
+  const tabDocs = docs.filter(d => langTab === 'all' || langOf(d) === langTab)
+  const tabCount = (t: LangTab) =>
+    t === 'all' ? docs.length : docs.filter(d => langOf(d) === t).length
+
   return (
     <div className="space-y-4">
       <LinesSection />
-      <div className="grid md:grid-cols-2 gap-4 items-start">
-      <div className="space-y-3">
-        {err && <ErrorBox error={err} />}
+      {err && <ErrorBox error={err} />}
 
-        <Panel
-          title="Документы"
-          subtitle="PDF-книги — источник цитат для гипотез"
-          bodyClass="p-0"
-          actions={
-            <>
-              <button className="btn btn-primary btn-sm" disabled={uploading}
-                onClick={() => fileRef.current?.click()}>
-                <Icon name="upload" className="w-4 h-4" />
-                {uploading ? 'Индексирую…' : 'Загрузить PDF/TXT'}
-              </button>
-              <input ref={fileRef} type="file" accept=".pdf,.txt" className="hidden"
-                onChange={e => e.target.files?.[0] && upload(e.target.files[0])} />
-            </>
-          }
-        >
-          <div className="overflow-x-auto">
-            <table className="tbl">
-              <thead>
-                <tr>
-                  <th className="w-8" title="Учитывать источник в поиске и цитатах"></th>
-                  <th>Источник</th>
-                  <th className="text-right">Стр.</th>
-                  <th className="text-right">Чанков</th>
-                  <th>Статус</th>
-                  <th className="w-8"></th>
-                </tr>
-              </thead>
-              {docs.length > 0 && LANG_GROUPS.map(g => {
-                // неизвестный код языка не должен прятать документ — в «Русский»
-                const langOf = (d: KbDoc) =>
-                  LANG_GROUPS.some(x => x.key === d.lang) ? d.lang : 'ru'
-                const group = docs.filter(d => langOf(d) === g.key)
+      <Panel title="Вопрос к базе знаний"
+        subtitle="Ответ строится только по проиндексированным документам, с цитатами и страницами">
+        <div className="flex gap-2">
+          <input className="input flex-1"
+            placeholder="напр.: как извлекают золото из упорных руд?"
+            value={question} onChange={e => setQuestion(e.target.value)}
+            onKeyDown={e => e.key === 'Enter' && ask()} />
+          <button className="btn btn-primary shrink-0" disabled={asking} onClick={ask}>
+            {asking
+              ? <span className="inline-block w-4 h-4 rounded-full border-2 border-current border-t-transparent animate-spin" />
+              : <><Icon name="search" className="w-4 h-4" />Спросить</>}
+          </button>
+        </div>
+      </Panel>
+
+      {answer && (
+        <div className="card p-4 space-y-3 animate-in">
+          <div className="text-sm whitespace-pre-wrap leading-relaxed text-text">{answer.answer}</div>
+          {answer.citations.length > 0 && (
+            <div className="border-t border-line pt-3">
+              <SectionLabel>Источники</SectionLabel>
+              <div className="grid md:grid-cols-2 gap-1.5 stagger">
+                {answer.citations.map((c, i) => (
+                  <button key={i}
+                    className="block text-left w-full text-xs rounded-md p-2.5 bg-surface-2 border border-line transition-colors hover:border-brand hover:bg-brand-tint cursor-pointer"
+                    onClick={() => setChunk(c.chunk_id)}>
+                    <span className="text-text">«{c.quote.slice(0, 140)}…»</span>
+                    <span className="num text-muted"> — {c.source}, с. {c.page}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      <Panel
+        title="Документы"
+        subtitle="Источники цитат для гипотез: клик по названию — читать, галочка — учитывать в поиске"
+        bodyClass="p-0"
+        actions={
+          <>
+            <Segmented
+              options={(['all', ...LANGS] as LangTab[]).map(t => ({
+                value: t,
+                label: <span>{t === 'all' ? 'Все' : LANG_LABEL[t]}{' '}
+                  <span className="num opacity-60">{tabCount(t)}</span></span>,
+              }))}
+              value={langTab} onChange={setLangTab} />
+            <button className="btn btn-primary btn-sm" disabled={uploading}
+              onClick={() => fileRef.current?.click()}>
+              <Icon name="upload" className="w-4 h-4" />
+              {uploading ? 'Индексирую…' : 'Загрузить PDF/TXT'}
+            </button>
+            <input ref={fileRef} type="file" accept=".pdf,.txt" className="hidden"
+              onChange={e => e.target.files?.[0] && upload(e.target.files[0])} />
+          </>
+        }
+      >
+        <div className="overflow-x-auto">
+          <table className="tbl">
+            <thead>
+              <tr>
+                <th className="w-8" title="Учитывать источник в поиске и цитатах"></th>
+                <th>Источник</th>
+                <th>Язык</th>
+                <th className="text-right">Стр.</th>
+                <th className="text-right">Фрагментов</th>
+                <th>Статус</th>
+                <th className="w-8"></th>
+              </tr>
+            </thead>
+            <tbody className="stagger">
+              {tabDocs.map(d => {
+                const on = d.enabled !== false
                 return (
-                  <tbody key={g.key} className="stagger">
-                    <tr className="bg-surface-2/60">
-                      <td colSpan={6} className="py-1.5">
-                        <span className="text-xs font-semibold uppercase tracking-wide text-muted">{g.label}</span>
-                        <span className="text-xs text-faint ml-2">{g.hint}</span>
-                        <span className="num text-xs text-faint ml-2">
-                          {group.filter(d => d.enabled !== false).length}/{group.length} активно
-                        </span>
-                      </td>
-                    </tr>
-                    {group.map(d => {
-                      const on = d.enabled !== false
-                      return (
-                        <tr key={d.doc_id} className={on ? '' : 'opacity-45'}>
-                          <td>
-                            <input type="checkbox" checked={on}
-                              className="accent-brand w-4 h-4 cursor-pointer align-middle"
-                              title={on ? 'Источник учитывается в поиске — снять, чтобы выключить'
-                                       : 'Источник выключен — не участвует в поиске и цитатах'}
-                              onChange={() => toggleDoc(d)} />
-                          </td>
-                          <td className="max-w-[13rem] truncate" title={d.source}>
-                            {d.source}
-                            {!on && <Badge tone="default">выключен</Badge>}
-                          </td>
-                          <td className="num text-right">{d.pages}</td>
-                          <td className="num text-right">{d.chunks}</td>
-                          <td><DocStatus d={d} /></td>
-                          <td>
-                            <button type="button"
-                              className="btn btn-ghost btn-sm text-danger px-1.5"
-                              title="Удалить источник из базы знаний"
-                              onClick={() => deleteDoc(d)}>
-                              <Icon name="trash" className="w-4 h-4" />
-                            </button>
-                          </td>
-                        </tr>
-                      )
-                    })}
-                    {group.length === 0 && (
-                      <tr>
-                        <td colSpan={6} className="py-2 text-xs text-faint">
-                          Источников на этом языке пока нет — загрузите PDF.
-                        </td>
-                      </tr>
-                    )}
-                  </tbody>
-                )
-              })}
-              {docs.length === 0 &&
-                <tbody>
-                  <tr>
-                    <td colSpan={6} className="text-center py-8 text-faint">
-                      Загрузите PDF-книги — они станут источником цитат для гипотез
+                  <tr key={d.doc_id} className={on ? '' : 'opacity-45'}>
+                    <td>
+                      <input type="checkbox" checked={on}
+                        className="accent-brand w-4 h-4 cursor-pointer align-middle"
+                        title={on ? 'Источник учитывается в поиске — снять, чтобы выключить'
+                                 : 'Источник выключен — не участвует в поиске и цитатах'}
+                        onChange={() => toggleDoc(d)} />
+                    </td>
+                    <td className="max-w-md">
+                      <button type="button"
+                        className="text-left truncate max-w-full hover:text-brand hover:underline underline-offset-2 cursor-pointer align-middle"
+                        title="Открыть источник для чтения"
+                        onClick={() => setPreview(d)}>
+                        {d.source}
+                      </button>
+                      {!on && <Badge tone="default">выключен</Badge>}
+                    </td>
+                    <td><Badge>{LANG_LABEL[langOf(d)]}</Badge></td>
+                    <td className="num text-right">{d.pages}</td>
+                    <td className="num text-right">{d.chunks}</td>
+                    <td><DocStatus d={d} /></td>
+                    <td>
+                      <button type="button"
+                        className="btn btn-ghost btn-sm text-danger px-1.5"
+                        title="Удалить источник из базы знаний"
+                        onClick={() => deleteDoc(d)}>
+                        <Icon name="trash" className="w-4 h-4" />
+                      </button>
                     </td>
                   </tr>
-                </tbody>}
-            </table>
-          </div>
-        </Panel>
-      </div>
+                )
+              })}
+              {tabDocs.length === 0 && (
+                <tr>
+                  <td colSpan={7} className="text-center py-8 text-faint">
+                    {docs.length === 0
+                      ? 'Загрузите PDF-книги — они станут источником цитат для гипотез'
+                      : 'Источников на этом языке пока нет — загрузите PDF или TXT.'}
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </Panel>
 
-      <div className="space-y-3">
-        <Panel title="Вопрос к базе знаний" subtitle="Ответ строится только по проиндексированным документам, с цитатами и страницами">
-          <div className="flex gap-2">
-            <input className="input flex-1"
-              placeholder="напр.: как извлекают золото из упорных руд?"
-              value={question} onChange={e => setQuestion(e.target.value)}
-              onKeyDown={e => e.key === 'Enter' && ask()} />
-            <button className="btn btn-primary shrink-0" disabled={asking} onClick={ask}>
-              {asking
-                ? <span className="inline-block w-4 h-4 rounded-full border-2 border-current border-t-transparent animate-spin" />
-                : <><Icon name="search" className="w-4 h-4" />Спросить</>}
-            </button>
-          </div>
-        </Panel>
-
-        {answer && (
-          <div className="card p-4 space-y-3 animate-in">
-            <div className="text-sm whitespace-pre-wrap leading-relaxed text-text">{answer.answer}</div>
-            {answer.citations.length > 0 && (
-              <div className="border-t border-line pt-3">
-                <SectionLabel>Источники</SectionLabel>
-                <div className="space-y-1.5 stagger">
-                  {answer.citations.map((c, i) => (
-                    <button key={i}
-                      className="block text-left w-full text-xs rounded-md p-2.5 bg-surface-2 border border-line transition-colors hover:border-brand hover:bg-brand-tint cursor-pointer"
-                      onClick={() => setChunk(c.chunk_id)}>
-                      <span className="text-text">«{c.quote.slice(0, 140)}…»</span>
-                      <span className="num text-muted"> — {c.source}, с. {c.page}</span>
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
-          </div>
-        )}
-      </div>
-      </div>
       {chunk && <ChunkModal chunkId={chunk} onClose={() => setChunk(null)} />}
+      {preview && <DocPreviewModal doc={preview} onClose={() => setPreview(null)} />}
     </div>
   )
 }

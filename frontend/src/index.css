@@ -311,6 +311,14 @@ input[type="range"] { accent-color: var(--c-brand); }
   background-size: 200% 100%; animation: shimmer 1.4s ease-in-out infinite; border-radius: var(--radius-md);
 }
 
+/* мягкое затухание верхнего и нижнего края прокручиваемой области, чтобы
+   контент не обрезался резко на границах скролла */
+.scroll-fade {
+  --fade: 22px;
+  -webkit-mask-image: linear-gradient(to bottom, transparent, #000 var(--fade), #000 calc(100% - var(--fade)), transparent);
+  mask-image: linear-gradient(to bottom, transparent, #000 var(--fade), #000 calc(100% - var(--fade)), transparent);
+}
+
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: .001ms !important; transition-duration: .001ms !important; }
 }

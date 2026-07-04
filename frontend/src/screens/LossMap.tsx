@@ -305,7 +305,6 @@ export default function LossMap() {
   const notProposed = diag.not_proposed.filter(x => x.element === el)
   const r5 = diag.issues.filter(i => i.rule?.startsWith('R5') && i.severity !== 'info')
   const hasAside = r5.length > 0 || notProposed.length > 0
-  const hasFlowsheet = !!fsInfo?.flowsheet
 
   return (
     <div className="space-y-4 animate-in">
@@ -323,7 +322,13 @@ export default function LossMap() {
           </button>
         </>} />
 
-      {/* тепловая карта — на всю ширину, сверху */}
+      {/* схема фабрики — наверх, во всю ширину */}
+      {fsInfo?.flowsheet && (
+        <FlowsheetGraph factory={fsInfo.factory} fs={fsInfo.flowsheet} sources={schemes}
+          highlight={new Set(diag.diagnoses.flatMap(d => d.node_refs ?? []))} />
+      )}
+
+      {/* тепловая карта — во всю ширину */}
       <Panel
         title={<span className="flex items-center gap-2">
           <Badge tone={el === 'Ni' ? 'brand' : 'warn'}>{el}</Badge>
@@ -338,17 +343,15 @@ export default function LossMap() {
         <HeatTable el={el} diag={diag} />
       </Panel>
 
-      {/* низ: слева диагнозы + «почему не предложено», справа — узкая высокая схема фабрики */}
-      <div className={hasFlowsheet ? 'grid gap-4 xl:grid-cols-[minmax(0,1fr)_380px] items-start' : ''}>
-        {/* левая колонка: диагнозы, затем «почему не предложено» */}
-        <div className="space-y-4 min-w-0">
+      {/* диагнозы | «почему не предложено» — в один горизонтальный ряд, согласованно */}
+      <div className={`grid gap-4 items-start ${hasAside ? 'lg:grid-cols-2' : ''}`}>
         {/* диагнозы */}
         <section className="flex flex-col gap-2 min-w-0">
           <SectionLabel>Диагнозы {el} · {diagnoses.length}</SectionLabel>
           {diagnoses.length === 0
             ? <EmptyBox text={`Для ${el} правила диагностики не сработали`} icon="target" />
             : (
-              <div className={`grid gap-3 auto-rows-fr ${diagnoses.length > 1 ? 'sm:grid-cols-2' : ''}`}>
+              <div className={`grid gap-3 auto-rows-fr ${!hasAside && diagnoses.length > 1 ? 'sm:grid-cols-2' : ''}`}>
                 {diagnoses.map(d => {
                   const key = d.rule_id + d.element
                   return (
@@ -415,15 +418,6 @@ export default function LossMap() {
               )}
             </div>
           </section>
-        )}
-        </div>{/* /левая колонка */}
-
-        {/* правая колонка: схема фабрики — узкая, занимает высоту */}
-        {fsInfo?.flowsheet && (
-          <div className="min-w-0">
-            <FlowsheetGraph factory={fsInfo.factory} fs={fsInfo.flowsheet} sources={schemes}
-              highlight={new Set(diag.diagnoses.flatMap(d => d.node_refs ?? []))} />
-          </div>
         )}
       </div>
     </div>

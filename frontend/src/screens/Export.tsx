@@ -150,6 +150,8 @@ function RoadmapTab({ pid, hyps }: { pid: string; hyps: Hypothesis[] }) {
   const [conflict, setConflict] = useState<{ itemId: string; start: string; message: string } | null>(null)
   // живой драг: какую гипотезу и на сколько недель тянем
   const [drag, setDrag] = useState<{ hid: string; fromStart: number; deltaW: number } | null>(null)
+  // модалка-разбор принятого конфликта (клик по значку ⚠ на стадии)
+  const [explain, setExplain] = useState<RoadmapItem | null>(null)
 
   useEffect(() => { api.roadmap(pid).then(setItems).catch(() => setItems([])) }, [pid])
 
@@ -319,6 +321,15 @@ function RoadmapTab({ pid, hyps }: { pid: string; hyps: Hypothesis[] }) {
                             style={{ background: 'var(--c-surface)', color: 'var(--c-text)' }} title="на неделю вперёд">
                             <Icon name="arrowRight" className="w-3 h-3" />
                           </button>
+                          {it.manual_conflict && (
+                            <button onPointerDown={e => e.stopPropagation()}
+                              onClick={e => { e.stopPropagation(); setExplain(it) }}
+                              className="absolute -top-1.5 -right-1.5 z-30 grid place-items-center w-4 h-4 rounded-full"
+                              style={{ background: 'var(--c-danger)', color: '#fff', boxShadow: '0 1px 3px rgba(0,0,0,.4)' }}
+                              title="Конфликт занятости ресурса — подробнее">
+                              <Icon name="alert" className="w-2.5 h-2.5" />
+                            </button>
+                          )}
                         </div>
                       )
                     })}
@@ -357,7 +368,9 @@ function RoadmapTab({ pid, hyps }: { pid: string; hyps: Hypothesis[] }) {
               <span className="inline-block w-2 h-2 rotate-45" style={{ background: 'var(--c-ink)' }} /> ворота с критерием ·
               тяните сегмент или ◀ ▶ (±неделя) ·
               <span className="inline-block w-2.5 h-0.5 align-middle" style={{ background: 'var(--c-danger)' }} /> сегодня ·
-              <span className="inline-block w-3 h-3 rounded align-middle" style={{ boxShadow: 'inset 0 0 0 2px var(--c-danger)' }} /> принятый конфликт
+              <span className="inline-grid place-items-center w-3.5 h-3.5 rounded-full align-middle"
+                style={{ background: 'var(--c-danger)', color: '#fff' }}><Icon name="alert" className="w-2 h-2" /></span>
+              принятый конфликт — нажмите значок для разбора
             </span>
           </SectionLabel>
         </div>
@@ -381,6 +394,53 @@ function RoadmapTab({ pid, hyps }: { pid: string; hyps: Hypothesis[] }) {
           </div>
         </Modal>
       )}
+
+      {explain && (() => {
+        const res = explain.resource
+        const cap = res === 'лаборатория' ? 2 : 1
+        const clash = items.filter(o => o.id !== explain.id && o.resource === res &&
+          parseDay(o.start) < parseDay(explain.end) && parseDay(explain.start) < parseDay(o.end))
+        return (
+          <Modal title="Конфликт занятости ресурса" onClose={() => setExplain(null)}>
+            <div className="space-y-4 text-sm">
+              <div>
+                <div className="text-xs text-muted mb-0.5">Ресурс</div>
+                <div className="font-bold" style={{ color: 'var(--c-danger)' }}>{res || '—'}</div>
+                <div className="text-xs text-muted mt-0.5">
+                  может вести {cap === 1 ? 'только одну программу' : `не более ${cap} программ`} одновременно —
+                  иначе эффекты стадий не разделить.
+                </div>
+              </div>
+              <div>
+                <div className="text-xs text-muted mb-0.5">Эта стадия</div>
+                <div><b>{explain.hypothesis_title}</b> · {STAGE_LABEL[explain.stage]}</div>
+                <div className="num text-xs text-muted">{ruDate(explain.start)} → {ruDate(explain.end)}</div>
+              </div>
+              <div>
+                <div className="text-xs text-muted mb-1">
+                  Идёт на этом ресурсе одновременно с {clash.length}
+                  {clash.length === 1 ? ' стадией' : ' стадиями'}:
+                </div>
+                <div className="space-y-1.5">
+                  {clash.map(o => (
+                    <div key={o.id} className="card-2 p-2" style={{ boxShadow: 'inset 0 0 0 1px var(--c-danger)' }}>
+                      <div><b>{o.hypothesis_title}</b> · {STAGE_LABEL[o.stage]}</div>
+                      <div className="num text-xs text-muted">{ruDate(o.start)} → {ruDate(o.end)}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+              <p className="text-xs text-muted">
+                Конфликт принят вручную. Чтобы снять пометку — разведите стадии по времени
+                (перетащите сегмент или стрелками ◀ ▶).
+              </p>
+              <div className="flex justify-end">
+                <button className="btn btn-primary" onClick={() => setExplain(null)}>Понятно</button>
+              </div>
+            </div>
+          </Modal>
+        )
+      })()}
     </div>
   )
 }

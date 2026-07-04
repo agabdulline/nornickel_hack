@@ -182,6 +182,7 @@ def generate_hypotheses(report: TailingsReport, diag: DiagnosticsResult, *,
         _ground_mock_citations(hyps, kb_index)
     else:
         _reground_citations(hyps, kb_index, llm=llm)
+        _fill_quote_translations(hyps, llm)
     log.info("Генерация завершена: %d гипотез после дедупа/добора/капа (сырых от модели: %d)",
              len(hyps), n_raw)
     return hyps
@@ -399,6 +400,29 @@ def _reground_citations(hyps: list[Hypothesis], kb_index: KBIndex,
     if needy:
         log.info("Смысловое пере-заземление: %d/%d гипотез получили обосновывающую цитату",
                  replaced, len(needy))
+
+
+def _fill_quote_translations(hyps: list[Hypothesis], llm: LLMClient | None):
+    """Иностранные цитаты получают русский перевод (quote_ru) для карточек;
+    дословный оригинал остаётся источником верификации. Кэшируется."""
+    from ..kb.index import detect_lang
+    from ..kb.translate import translate_texts
+    foreign = [c for h in hyps for c in h.rationale
+               if c.quote and not c.quote_ru and detect_lang(c.quote) != "ru"]
+    if not foreign or not getattr(llm, "enabled", False):
+        return
+    try:
+        got = translate_texts([c.quote for c in foreign], llm)
+    except Exception as e:  # noqa: BLE001 — перевод не должен ронять генерацию
+        log.warning("Перевод цитат не удался (%s)", e)
+        return
+    n = 0
+    for c in foreign:
+        if c.quote in got:
+            c.quote_ru = got[c.quote]
+            n += 1
+    if n:
+        log.info("Цитаты: %d иностранных получили русский перевод", n)
 
 
 def _postprocess(raw: dict, report: TailingsReport, diag: DiagnosticsResult,

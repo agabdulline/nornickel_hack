@@ -285,6 +285,46 @@ def test_kb_translate_rejects_wrong_language(tmp_path, monkeypatch):
     assert not any("硫" in v for v in (tr._CACHE or {}).values())
 
 
+def test_translate_texts_and_quote_ru(tmp_path, monkeypatch):
+    """translate_texts кэширует по хэшу текста; _fill_quote_translations
+    проставляет quote_ru только иностранным цитатам."""
+    import json as _json
+
+    import backend.app.kb.translate as tr
+    from backend.app.hypotheses.generate import _fill_quote_translations
+    from backend.app.models import Citation, Effect, Hypothesis
+
+    monkeypatch.setattr(tr, "STORAGE", tmp_path / "st")
+    monkeypatch.setattr(tr, "_CACHE", None)
+
+    class FakeLLM:
+        enabled = True
+        calls = 0
+
+        def chat(self, messages, strong=False, json_mode=False):
+            FakeLLM.calls += 1
+            payload = _json.loads(messages[-1]["content"])
+            return {"content": _json.dumps({"translations": [
+                {"n": p["n"], "text": f"Русский перевод №{p['n']}."} for p in payload
+            ]}, ensure_ascii=False)}
+
+    h = Hypothesis(id="h1", title="Тест", process_area="классификация", element="Ni",
+                   effect=Effect(tonnes_max=1, tonnes_expected=1, money_usd=1),
+                   rationale=[
+                       Citation(quote="Decreasing apex diameter increases cut size."),
+                       Citation(quote="Уже русская цитата про насадки."),
+                   ], mechanism="м")
+    _fill_quote_translations([h], FakeLLM())
+    assert h.rationale[0].quote_ru and "Русский" in h.rationale[0].quote_ru
+    assert h.rationale[1].quote_ru is None, "русская цитата не переводится"
+    # повторный вызов — из кэша, без новых LLM-вызовов
+    h.rationale[0].quote_ru = None
+    calls_before = FakeLLM.calls
+    _fill_quote_translations([h], FakeLLM())
+    assert FakeLLM.calls == calls_before
+    assert h.rationale[0].quote_ru
+
+
 def test_doc_lang_tie_deterministic():
     from backend.app.kb.index import doc_lang
     assert doc_lang([RU, EN]) == "ru", "при ничьей приоритет ru"

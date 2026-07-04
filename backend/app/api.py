@@ -683,12 +683,14 @@ async def kb_upload(file: UploadFile, kb: KBIndex = Depends(get_kb)) -> dict:
         from .kb.ingest import ingest_text
         result = await run_in_threadpool(ingest_text, data, name, kb)
         _save_kb_original(data, name, result["doc_id"])
+        _start_background_pretranslate(result["doc_id"], kb)
         return result
     if not low.endswith(".pdf"):
         raise HTTPException(422, "поддерживаются PDF и TXT")
     # чанкование + dense-эмбеддинг — минуты для больших книг: не блокируем event loop
     result = await run_in_threadpool(ingest_pdf, data, name, kb)
     _save_kb_original(data, name, result["doc_id"])
+    _start_background_pretranslate(result["doc_id"], kb)
     if result["status"] == "scan_no_text":
         from .kb import ocr as kb_ocr
         if kb_ocr.available():
@@ -701,6 +703,21 @@ async def kb_upload(file: UploadFile, kb: KBIndex = Depends(get_kb)) -> dict:
                     "message": "скан без текстового слоя — распознаём Vision OCR, "
                                "прогресс в списке документов"}
     return result
+
+
+def _start_background_pretranslate(doc_id: str, kb: KBIndex):
+    """Нерусский источник переводится на русский сразу после загрузки (фон),
+    чтобы читалка и цитаты открывались мгновенно из кэша."""
+    import threading
+
+    def work():
+        try:
+            from .kb.translate import pretranslate_document
+            pretranslate_document(doc_id, kb, llm_client)
+        except Exception as e:  # noqa: BLE001 — фон не должен ронять ничего
+            log.warning("Пре-перевод %s не удался: %s", doc_id, e)
+
+    threading.Thread(target=work, daemon=True, name=f"tr-{doc_id}").start()
 
 
 def _start_background_ocr(data: bytes, name: str, doc_id: str, total: int, kb: KBIndex):

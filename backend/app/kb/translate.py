@@ -69,6 +69,49 @@ def _key(chunk_id: str, text: str) -> str:
     return f"{chunk_id}:{hashlib.sha1(text.encode('utf-8')).hexdigest()[:8]}"
 
 
+def translate_texts(texts: list[str], llm: LLMClient) -> dict[str, str]:
+    """Перевод произвольных коротких текстов (цитаты гипотез) -> {текст: перевод}.
+    Тот же дисковый кэш (ключ — хэш текста) и та же валидация языка."""
+    with _LOCK:
+        cache = _load_cache()
+        out: dict[str, str] = {}
+        todo: list[tuple[str, str]] = []
+        for t in dict.fromkeys(texts):  # уникальные, порядок сохраняем
+            if not t.strip():
+                continue
+            k = "txt:" + hashlib.sha1(t.encode("utf-8")).hexdigest()[:16]
+            if k in cache and _is_ru(cache[k]):
+                out[t] = cache[k]
+            else:
+                todo.append((k, t))
+    if todo:
+        if not getattr(llm, "enabled", False):
+            return out
+        got = _run_batches(todo, llm)
+        with _LOCK:
+            for k, tr_text in got.items():
+                _load_cache()[k] = tr_text
+            _save_cache()
+        by_key = dict(todo)
+        out.update({by_key[k]: v for k, v in got.items() if k in by_key})
+    return out
+
+
+def pretranslate_document(doc_id: str, kb: KBIndex, llm: LLMClient) -> int:
+    """Фоновый пре-перевод всех чанков нерусского документа: наполняет кэш,
+    чтобы читалка открывалась мгновенно. -> сколько чанков переведено."""
+    meta = kb.docs.get(doc_id) or {}
+    if meta.get("lang", "ru") == "ru":
+        return 0
+    cids = [c["chunk_id"] for c in kb.chunks if c["doc_id"] == doc_id]
+    done = 0
+    for i in range(0, len(cids), 12):
+        done += len(translate_chunks(cids[i:i + 12], kb, llm))
+    log.info("Пре-перевод «%s»: %d/%d фрагментов в кэше",
+             meta.get("source", doc_id), done, len(cids))
+    return done
+
+
 def translate_chunks(chunk_ids: list[str], kb: KBIndex, llm: LLMClient) -> dict[str, str]:
     """-> {chunk_id: русский перевод}. Кэш + один батч-вызов FAST-модели
     для недостающих. Неизвестные chunk_id молча пропускаются."""
@@ -91,46 +134,7 @@ def translate_chunks(chunk_ids: list[str], kb: KBIndex, llm: LLMClient) -> dict[
     if todo:
         if not getattr(llm, "enabled", False):
             raise LLMUnavailable("нет LLM-ключа — перевод недоступен")
-
-        def one_batch(batch: list[tuple[str, str]]) -> dict[str, str]:
-            payload = [{"n": i, "text": t[:2500]} for i, (_cid, t) in enumerate(batch)]
-            resp = llm.chat([{"role": "system", "content": TRANSLATE_SYSTEM},
-                             {"role": "user",
-                              "content": json.dumps(payload, ensure_ascii=False)}],
-                            strong=False, json_mode=True)
-            data = extract_json(resp["content"])
-            if isinstance(data, list):
-                data = {"translations": data}
-            res: dict[str, str] = {}
-            for tr in (data.get("translations") or []):
-                try:
-                    i = int(tr["n"])
-                    if str(tr["text"]).strip():
-                        res[batch[i][0]] = str(tr["text"])
-                except (KeyError, IndexError, TypeError, ValueError):
-                    continue
-            return res
-
-        # порции по 3 параллельно: холодный перевод страницы читалки (6 чанков)
-        # укладывается в один «длинный вызов», а не в два последовательных
-        from concurrent.futures import ThreadPoolExecutor
-        batches = [todo[i:i + 3] for i in range(0, len(todo), 3)]
-        with ThreadPoolExecutor(max_workers=min(4, len(batches))) as pool:
-            results = list(pool.map(one_batch, batches))
-        got = {cid: text for res in results for cid, text in res.items()}
-
-        # переводы не по-русски отбрасываем; один ретрай для отклонённых
-        bad = [cid for cid, t in got.items() if not _is_ru(t)]
-        if bad:
-            log.warning("Перевод: %d фрагментов не на русском — ретрай", len(bad))
-            text_by = dict(todo)
-            retry = one_batch([(cid, text_by[cid]) for cid in bad])
-            for cid in bad:
-                if cid in retry and _is_ru(retry[cid]):
-                    got[cid] = retry[cid]
-                else:
-                    got.pop(cid, None)
-
+        got = _run_batches(todo, llm)
         text_by_cid = dict(todo)
         with _LOCK:
             for cid, tr_text in got.items():
@@ -140,3 +144,46 @@ def translate_chunks(chunk_ids: list[str], kb: KBIndex, llm: LLMClient) -> dict[
         log.info("Перевод: %d фрагментов новых, %d из кэша",
                  len(got), len(out) - len(got))
     return out
+
+
+def _run_batches(todo: list[tuple[str, str]], llm: LLMClient) -> dict[str, str]:
+    """(ключ, текст) -> {ключ: русский перевод}. Порции по 3 параллельно,
+    валидация целевого языка, один ретрай для отклонённых."""
+
+    def one_batch(batch: list[tuple[str, str]]) -> dict[str, str]:
+        payload = [{"n": i, "text": t[:2500]} for i, (_k, t) in enumerate(batch)]
+        resp = llm.chat([{"role": "system", "content": TRANSLATE_SYSTEM},
+                         {"role": "user",
+                          "content": json.dumps(payload, ensure_ascii=False)}],
+                        strong=False, json_mode=True)
+        data = extract_json(resp["content"])
+        if isinstance(data, list):
+            data = {"translations": data}
+        res: dict[str, str] = {}
+        for tr in (data.get("translations") or []):
+            try:
+                i = int(tr["n"])
+                if str(tr["text"]).strip():
+                    res[batch[i][0]] = str(tr["text"])
+            except (KeyError, IndexError, TypeError, ValueError):
+                continue
+        return res
+
+    from concurrent.futures import ThreadPoolExecutor
+    batches = [todo[i:i + 3] for i in range(0, len(todo), 3)]
+    with ThreadPoolExecutor(max_workers=min(4, len(batches))) as pool:
+        results = list(pool.map(one_batch, batches))
+    got = {k: t for res in results for k, t in res.items()}
+
+    # переводы не по-русски отбрасываем; один ретрай для отклонённых
+    bad = [k for k, t in got.items() if not _is_ru(t)]
+    if bad:
+        log.warning("Перевод: %d фрагментов не на русском — ретрай", len(bad))
+        text_by = dict(todo)
+        retry = one_batch([(k, text_by[k]) for k in bad])
+        for k in bad:
+            if k in retry and _is_ru(retry[k]):
+                got[k] = retry[k]
+            else:
+                got.pop(k, None)
+    return got

@@ -378,19 +378,25 @@ function HypCard({ h, rank, onFeedback, onChunk, weights, moneyLo, moneyHi }: {
 
           {h.rationale.length > 0 && (
             <div className="flex flex-wrap gap-1.5">
-              {h.rationale.map((c, i) => (
-                <button key={i}
-                  className={`badge ${c.verified ? 'badge-brand' : 'badge-warn'} max-w-md cursor-pointer`}
-                  title={c.quote}
-                  onClick={() => c.chunk_id && onChunk(c.chunk_id, c.quote)}>
-                  <Icon name={c.verified ? 'book' : 'alert'} className="w-3 h-3 shrink-0" />
-                  <span className="truncate min-w-0">
-                    «{c.quote.slice(0, 60)}…»
-                    {c.source && ` — ${c.source.slice(0, 30)}${c.page ? `, с.${c.page}` : ''}`}
-                    {!c.verified && ' · требует проверки'}
-                  </span>
-                </button>
-              ))}
+              {h.rationale.map((c, i) => {
+                // иностранная цитата показывается по-русски (дословный
+                // оригинал — в тултипе и в модалке с подсветкой)
+                const shown = c.quote_ru || c.quote
+                return (
+                  <button key={i}
+                    className={`badge ${c.verified ? 'badge-brand' : 'badge-warn'} max-w-md cursor-pointer`}
+                    title={c.quote_ru ? `Оригинал: ${c.quote}` : c.quote}
+                    onClick={() => c.chunk_id && onChunk(c.chunk_id, c.quote)}>
+                    <Icon name={c.verified ? 'book' : 'alert'} className="w-3 h-3 shrink-0" />
+                    <span className="truncate min-w-0">
+                      «{shown.slice(0, 60)}…»
+                      {c.source && ` — ${c.source.slice(0, 30)}${c.page ? `, с.${c.page}` : ''}`}
+                      {c.quote_ru && ' · перевод'}
+                      {!c.verified && ' · требует проверки'}
+                    </span>
+                  </button>
+                )
+              })}
             </div>
           )}
 

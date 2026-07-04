@@ -19,7 +19,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from backend.app.hypotheses.generate import _reground_citations  # noqa: E402
+from backend.app.hypotheses.generate import (_fill_quote_translations,  # noqa: E402
+                                              _reground_citations)
 from backend.app.hypotheses.verify import verify_citations  # noqa: E402
 from backend.app.kb.index import default_index  # noqa: E402
 from backend.app.llm import client  # noqa: E402
@@ -43,6 +44,7 @@ def main():
 
     before = {h.id: [(c.chunk_id, (c.quote or "")[:60]) for c in h.rationale] for h in hyps}
     _reground_citations(hyps, kb, llm=client, recheck_all=True)
+    _fill_quote_translations(hyps, client)
     verify_citations(hyps, kb)
 
     changed = 0

@@ -102,7 +102,8 @@ export interface DiagnosticsResult {
 }
 
 export interface Citation {
-  quote: string; source: string; page: number | null; chunk_id: string | null; verified: boolean;
+  quote: string; quote_ru?: string | null; source: string;
+  page: number | null; chunk_id: string | null; verified: boolean;
 }
 
 export interface Step {

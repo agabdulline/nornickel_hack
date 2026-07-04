@@ -198,7 +198,10 @@ def get_project(pid: str, store: Store = Depends(get_store)) -> dict:
         raise HTTPException(404, "проект не найден")
     has_report = store.get_reports(pid) is not None
     n_hyps = len(store.get_hypotheses(pid))
-    return {**p.model_dump(), "has_report": has_report, "hypotheses_count": n_hyps}
+    accepted = len(store.get_hypotheses(pid, statuses=["accepted", "testing", "confirmed"]))
+    roadmap_built = len(store.get_roadmap(pid)) > 0
+    return {**p.model_dump(), "has_report": has_report, "hypotheses_count": n_hyps,
+            "accepted_count": accepted, "roadmap_built": roadmap_built}
 
 
 @router.delete("/projects/{pid}")

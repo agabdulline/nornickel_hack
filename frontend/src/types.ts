@@ -34,6 +34,7 @@ export interface Project {
   created_at: string; weights: Record<string, number>; stoplist: string[];
   project_constraints?: ProjectConstraints;
   has_report?: boolean; hypotheses_count?: number;
+  accepted_count?: number; roadmap_built?: boolean;
 }
 
 export interface DataIssue {

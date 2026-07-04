@@ -6,6 +6,7 @@ export const STEP_PATH = ['report', 'map', 'hypotheses', 'export']
 
 /** Текущий шаг проекта (1..4) по наличию отчёта/гипотез. */
 export function projectStep(p: Project): number {
+  if (p.roadmap_built || (p.accepted_count ?? 0) > 0) return 4  // приняты гипотезы / построена карта
   return 1 + (p.has_report ? 1 : 0) + ((p.hypotheses_count ?? 0) > 0 ? 1 : 0)
 }
 

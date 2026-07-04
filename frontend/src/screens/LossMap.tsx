@@ -3,12 +3,13 @@ import { useNavigate, useParams } from 'react-router-dom'
 import { api, fmt } from '../api'
 import type { DiagnosticsResult, FlowsheetData, FlowsheetNode, TailingsReport } from '../types'
 import {
-  Badge, EmptyBox, ErrorBox, Icon, Panel, SectionLabel, Segmented, Spinner,
+  Badge, EmptyBox, ErrorBox, Icon, PageHeader, Panel, SectionLabel, Spinner,
 } from '../components/common'
 
 const FORMS = ['Раскрытый Pnt/Cp', 'Закрытый Pnt/Cp', 'Примесь в пирротине',
   'Силикатная форма', 'Пирит', 'Миллерит']
 const CLASSES = ['+125', '-125+71', '-71+45', '-45+20', '-20+10', '-10']
+const ELEMENTS = ['Ni', 'Cu'] as const
 
 const TYPE_ORDER = ['crushing', 'grinding', 'classification', 'flotation', 'thickening',
   'magnetic', 'gravity']
@@ -78,13 +79,76 @@ function FlowsheetGraph({ factory, fs, highlight }: {
   )
 }
 
+/** Тепловая матрица классы×формы для одного элемента. */
+function HeatTable({ el, diag }: { el: 'Ni' | 'Cu'; diag: DiagnosticsResult }) {
+  const map = diag.loss_map?.[el] ?? {}
+  const classes = CLASSES.filter(c => map[c])
+  const maxT = Math.max(1, ...classes.flatMap(c => FORMS.map(f => map[c]?.[f]?.tonnes ?? 0)))
+
+  return (
+    <>
+      <div className="overflow-x-auto">
+        <table className="tbl">
+          <thead>
+            <tr>
+              <th>Класс, мкм</th>
+              {FORMS.map(f => {
+                const rec = map[classes[0]]?.[f]?.recoverable
+                return (
+                  <th key={f} className={rec === false ? 'text-faint' : ''}>
+                    {rec === false && '🔒 '}{f}
+                  </th>
+                )
+              })}
+              <th className="text-right">Итого класс</th>
+            </tr>
+          </thead>
+          <tbody>
+            {classes.map(c => {
+              const rowT = FORMS.reduce((s, f) => s + (map[c]?.[f]?.tonnes ?? 0), 0)
+              return (
+                <tr key={c}>
+                  <td className="font-semibold num">{c}</td>
+                  {FORMS.map(f => {
+                    const cell = map[c]?.[f]
+                    if (!cell) return <td key={f} className="text-faint">—</td>
+                    const alpha = Math.pow((cell.tonnes ?? 0) / maxT, 0.6)
+                    const bg = cell.recoverable
+                      ? `rgba(var(--heat), ${(0.06 + alpha * 0.55).toFixed(3)})`
+                      : `rgba(var(--heat-inert), ${(0.04 + alpha * 0.28).toFixed(3)})`
+                    return (
+                      <td key={f} title={`${c} / ${f} / ${el}: ${fmt.t(cell.tonnes)} т` +
+                        (cell.share_pct != null ? ` (${fmt.pct(cell.share_pct)})` : '') +
+                        (cell.recoverable ? ' · извлекаемо' : ' · НЕизвлекаемо') +
+                        (cell.provenance !== 'measured' ? ` · ${cell.provenance}` : '')}
+                        className={`num text-right ${!cell.recoverable ? 'text-muted' : ''} ` +
+                          (cell.provenance !== 'measured' ? 'recovered-cell' : '')}
+                        style={{ background: cell.provenance === 'measured' ? bg : undefined }}>
+                        {fmt.t(cell.tonnes, 0)}
+                      </td>
+                    )
+                  })}
+                  <td className="num text-right font-semibold">{fmt.t(rowT, 0)}</td>
+                </tr>
+              )
+            })}
+          </tbody>
+        </table>
+      </div>
+      <div className="text-xs mt-2" style={{ color: 'var(--c-faint)' }}>
+        интенсивность = тонны потерь · 🔒 приглушённые колонки — неизвлекаемые формы ·
+        янтарный пунктир — восстановленные значения
+      </div>
+    </>
+  )
+}
+
 export default function LossMap() {
   const { pid = '' } = useParams()
   const nav = useNavigate()
   const [reports, setReports] = useState<TailingsReport[] | null>(null)
   const [tailType, setTailType] = useState<string>('')
   const [diag, setDiag] = useState<DiagnosticsResult | null>(null)
-  const [el, setEl] = useState<'Ni' | 'Cu'>('Ni')
   const [err, setErr] = useState('')
   const [openRule, setOpenRule] = useState<string | null>(null)
   const [fsInfo, setFsInfo] = useState<{ factory: string | null; flowsheet: FlowsheetData | null } | null>(null)
@@ -111,127 +175,79 @@ export default function LossMap() {
     'Отчёт ещё не загружен — начните с шага «1 · Данные».' : err} />
   if (!report || !diag) return <Spinner />
 
-  const map = diag.loss_map?.[el] ?? {}
-  const classes = CLASSES.filter(c => map[c])
-  const maxT = Math.max(1, ...classes.flatMap(c => FORMS.map(f => map[c]?.[f]?.tonnes ?? 0)))
-
-  const diagnoses = diag.diagnoses.filter(d => d.element === el)
-
   return (
     <div className="space-y-4 animate-in">
-      {/* шапка экрана */}
-      <div className="flex items-center gap-3 flex-wrap">
-        <h1 className="text-xl font-extrabold">Карта потерь</h1>
-        {reports && reports.length > 1 && (
-          <select className="select w-auto" value={tailType} onChange={e => setTailType(e.target.value)}>
-            {reports.map(r => <option key={r.tail_type}>{r.tail_type}</option>)}
-          </select>
-        )}
-        <Segmented options={['Ni', 'Cu'] as const} value={el} onChange={setEl} />
-        <span className="text-sm" style={{ color: 'var(--c-muted)' }}>
-          потери {el}: <b className="num" style={{ color: 'var(--c-text)' }}>{fmt.t(report.losses_tonnes[el])} т</b> ·
-          извлекаемо <b className="num text-ok">{fmt.pct(report.recoverable_pct[el])}</b>
-        </span>
-        <button className="btn btn-primary ml-auto" onClick={() => nav(`/p/${pid}/hypotheses`)}>
-          К гипотезам <Icon name="arrowRight" />
-        </button>
-      </div>
+      <PageHeader title="Карта потерь"
+        subtitle="Где и в какой минеральной форме теряется металл — Ni и Cu"
+        actions={<>
+          {reports && reports.length > 1 && (
+            <select className="select w-auto" value={tailType} onChange={e => setTailType(e.target.value)}>
+              {reports.map(r => <option key={r.tail_type}>{r.tail_type}</option>)}
+            </select>
+          )}
+          <button className="btn btn-primary" onClick={() => nav(`/p/${pid}/hypotheses`)}>
+            К гипотезам <Icon name="arrowRight" />
+          </button>
+        </>} />
 
       {fsInfo?.flowsheet && (
         <FlowsheetGraph factory={fsInfo.factory} fs={fsInfo.flowsheet}
           highlight={new Set(diag.diagnoses.flatMap(d => d.node_refs ?? []))} />
       )}
 
-      <div className="flex flex-col lg:flex-row gap-4 items-start">
-        {/* тепловая матрица */}
-        <Panel
-          title="Тепловая карта потерь"
-          subtitle="интенсивность = тонны потерь по классам крупности и минеральным формам"
-          className="w-full lg:flex-1 min-w-0"
-          bodyClass="p-3">
-          <div className="overflow-x-auto">
-            <table className="tbl">
-              <thead>
-                <tr>
-                  <th>Класс, мкм</th>
-                  {FORMS.map(f => {
-                    const rec = map[classes[0]]?.[f]?.recoverable
-                    return (
-                      <th key={f} className={rec === false ? 'text-faint' : ''}>
-                        {rec === false && '🔒 '}{f}
-                      </th>
-                    )
-                  })}
-                  <th className="text-right">Итого класс</th>
-                </tr>
-              </thead>
-              <tbody>
-                {classes.map(c => {
-                  const rowT = FORMS.reduce((s, f) => s + (map[c]?.[f]?.tonnes ?? 0), 0)
-                  return (
-                    <tr key={c}>
-                      <td className="font-semibold num">{c}</td>
-                      {FORMS.map(f => {
-                        const cell = map[c]?.[f]
-                        if (!cell) return <td key={f} className="text-faint">—</td>
-                        const alpha = Math.pow((cell.tonnes ?? 0) / maxT, 0.6)
-                        const bg = cell.recoverable
-                          ? `rgba(var(--heat), ${(0.06 + alpha * 0.55).toFixed(3)})`
-                          : `rgba(var(--heat-inert), ${(0.04 + alpha * 0.28).toFixed(3)})`
-                        return (
-                          <td key={f} title={`${c} / ${f} / ${el}: ${fmt.t(cell.tonnes)} т` +
-                            (cell.share_pct != null ? ` (${fmt.pct(cell.share_pct)})` : '') +
-                            (cell.recoverable ? ' · извлекаемо' : ' · НЕизвлекаемо') +
-                            (cell.provenance !== 'measured' ? ` · ${cell.provenance}` : '')}
-                            className={`num text-right ${!cell.recoverable ? 'text-muted' : ''} ` +
-                              (cell.provenance !== 'measured' ? 'recovered-cell' : '')}
-                            style={{ background: cell.provenance === 'measured' ? bg : undefined }}>
-                            {fmt.t(cell.tonnes, 0)}
-                          </td>
-                        )
-                      })}
-                      <td className="num text-right font-semibold">{fmt.t(rowT, 0)}</td>
-                    </tr>
-                  )
-                })}
-              </tbody>
-            </table>
-          </div>
-          <div className="text-xs mt-2" style={{ color: 'var(--c-faint)' }}>
-            интенсивность = тонны потерь · 🔒 приглушённые колонки — неизвлекаемые формы ·
-            янтарный пунктир — восстановленные значения
-          </div>
-        </Panel>
-
-        {/* панель диагнозов */}
-        <aside className="w-full lg:w-96 shrink-0 space-y-3">
-          <SectionLabel>Диагнозы</SectionLabel>
-          {diagnoses.length === 0 &&
-            <EmptyBox text={`Для ${el} правила не сработали`} icon="target" />}
-          {diagnoses.map(d => (
-            <div key={d.rule_id + d.element} className="card p-3 space-y-2 animate-in">
-              <div className="flex items-center gap-2">
-                <button type="button" title="показать правило" className="shrink-0"
-                  onClick={() => setOpenRule(openRule === d.rule_id ? null : d.rule_id)}>
-                  <Badge tone="solid" className="num cursor-pointer">{d.rule_id}</Badge>
-                </button>
-                <span className="font-semibold text-sm leading-tight">{d.title}</span>
-                {d.uncertain && <Badge tone="warn">неуверенно</Badge>}
-              </div>
-              <p className="text-sm leading-relaxed">{d.text}</p>
-              {openRule === d.rule_id && (
-                <pre className="text-xs num bg-surface-2 border border-line rounded-md p-2 overflow-x-auto"
-                  style={{ color: 'var(--c-muted)' }}>
-                  {JSON.stringify(d.inputs, null, 1)}
-                </pre>
-              )}
-              <button className="btn btn-primary w-full justify-center"
-                onClick={() => nav(`/p/${pid}/hypotheses`)}>
-                <Icon name="spark" />
-                Сгенерировать гипотезы (извлекаемо <span className="num">{fmt.t(d.tonnes_recoverable, 0)}</span> т)
-              </button>
-            </div>
+      <div className="flex flex-col xl:flex-row gap-4 items-start">
+        {/* две тепловые карты — Ni и Cu */}
+        <div className="w-full xl:flex-1 min-w-0 space-y-4">
+          {ELEMENTS.map(el => (
+            <Panel key={el}
+              title={<span className="flex items-center gap-2">
+                <Badge tone={el === 'Ni' ? 'brand' : 'warn'}>{el}</Badge>
+                Тепловая карта потерь
+              </span>}
+              subtitle={<>
+                потери <span className="num">{fmt.t(report.losses_tonnes[el])} т</span> ·
+                извлекаемо <span className="num" style={{ color: 'var(--c-ok)' }}>
+                  {fmt.pct(report.recoverable_pct[el])}</span>
+              </>}
+              bodyClass="p-3">
+              <HeatTable el={el} diag={diag} />
+            </Panel>
           ))}
+        </div>
+
+        {/* панель диагнозов — все элементы вместе */}
+        <aside className="w-full xl:w-96 shrink-0 space-y-3">
+          <SectionLabel>Диагнозы · {diag.diagnoses.length}</SectionLabel>
+          {diag.diagnoses.length === 0 &&
+            <EmptyBox text="Правила диагностики не сработали" icon="target" />}
+          {diag.diagnoses.map(d => {
+            const key = d.rule_id + d.element
+            return (
+              <div key={key} className="card p-3 space-y-2 animate-in">
+                <div className="flex items-center gap-2">
+                  <button type="button" title="показать правило" className="shrink-0"
+                    onClick={() => setOpenRule(openRule === key ? null : key)}>
+                    <Badge tone="solid" className="num cursor-pointer">{d.rule_id}</Badge>
+                  </button>
+                  <Badge tone={d.element === 'Ni' ? 'brand' : 'warn'}>{d.element}</Badge>
+                  <span className="font-semibold text-sm leading-tight">{d.title}</span>
+                  {d.uncertain && <Badge tone="warn">неуверенно</Badge>}
+                </div>
+                <p className="text-sm leading-relaxed">{d.text}</p>
+                {openRule === key && (
+                  <pre className="text-xs num bg-surface-2 border border-line rounded-md p-2 overflow-x-auto"
+                    style={{ color: 'var(--c-muted)' }}>
+                    {JSON.stringify(d.inputs, null, 1)}
+                  </pre>
+                )}
+                <button className="btn btn-primary w-full justify-center"
+                  onClick={() => nav(`/p/${pid}/hypotheses`)}>
+                  <Icon name="spark" />
+                  Сгенерировать гипотезы (извлекаемо <span className="num">{fmt.t(d.tonnes_recoverable, 0)}</span> т)
+                </button>
+              </div>
+            )
+          })}
 
           {diag.issues.filter(i => i.rule?.startsWith('R5')).length > 0 && (
             <div className="card p-3">
@@ -250,17 +266,19 @@ export default function LossMap() {
             </div>
           )}
 
-          <div className="card p-3">
-            <div className="font-semibold text-sm mb-2">Почему не предложено</div>
-            <ul className="space-y-1.5">
-              {diag.not_proposed.filter(x => x.element === el).map((x, n) => (
-                <li key={n} className="text-xs" style={{ color: 'var(--c-muted)' }}>
-                  <span className="font-medium text-faint">🔒 {x.form}</span>
-                  <span className="num"> · {fmt.t(x.tonnes, 0)} т</span> — {x.reason}
-                </li>
-              ))}
-            </ul>
-          </div>
+          {diag.not_proposed.length > 0 && (
+            <div className="card p-3">
+              <div className="font-semibold text-sm mb-2">Почему не предложено</div>
+              <ul className="space-y-1.5">
+                {diag.not_proposed.map((x, n) => (
+                  <li key={n} className="text-xs" style={{ color: 'var(--c-muted)' }}>
+                    <span className="font-medium text-faint">🔒 {x.form}</span>
+                    <span className="num"> · {x.element} · {fmt.t(x.tonnes, 0)} т</span> — {x.reason}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
         </aside>
       </div>
     </div>

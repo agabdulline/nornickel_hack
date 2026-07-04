@@ -3,7 +3,7 @@ import { useParams } from 'react-router-dom'
 import { api, fmt } from '../api'
 import type { Hypothesis } from '../types'
 import {
-  Badge, CapexBadge, ChunkModal, EmptyBox, ErrorBox, Icon, Meter, Panel,
+  Badge, CapexBadge, ChunkModal, EmptyBox, ErrorBox, Icon, Meter, PageHeader, Panel,
   SectionLabel, Spinner,
 } from '../components/common'
 
@@ -66,10 +66,7 @@ export default function Hypotheses() {
 
   return (
     <div className="space-y-4 animate-in">
-      <div className="flex items-center gap-3 flex-wrap">
-        <h1 className="text-xl font-extrabold">Гипотезы</h1>
-        <span className="text-sm text-muted">Ранжирование по вашим весам</span>
-      </div>
+      <PageHeader title="Гипотезы" subtitle="Ранжирование по вашим весам" />
 
       <div className="flex gap-4 items-start">
         {/* левая панель */}

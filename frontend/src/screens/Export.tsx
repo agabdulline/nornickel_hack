@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState, type CSSProperties } from 'react'
 import { useParams } from 'react-router-dom'
 import { api, fmt } from '../api'
 import type { Hypothesis, RoadmapItem } from '../types'
-import { ErrorBox, Icon, Panel, SectionLabel, Segmented, Spinner } from '../components/common'
+import { ErrorBox, Icon, PageHeader, Panel, SectionLabel, Segmented, Spinner } from '../components/common'
 
 export default function ExportScreen() {
   const { pid = '' } = useParams()
@@ -14,18 +14,16 @@ export default function ExportScreen() {
 
   return (
     <div className="space-y-4 animate-in">
-      {/* шапка экрана */}
-      <div className="flex items-center gap-3 flex-wrap">
-        <h1 className="text-xl font-extrabold">Отчёт и экспорт</h1>
-        <Segmented
-          options={[
-            { value: 'report', label: 'Отчёт' },
-            { value: 'roadmap', label: 'Дорожная карта' },
-          ]}
-          value={tab}
-          onChange={setTab}
-        />
-        <div className="ml-auto flex items-center gap-2">
+      <PageHeader title="Отчёт и экспорт"
+        actions={<>
+          <Segmented
+            options={[
+              { value: 'report', label: 'Отчёт' },
+              { value: 'roadmap', label: 'Дорожная карта' },
+            ]}
+            value={tab}
+            onChange={setTab}
+          />
           <a className="btn" href={`/api/projects/${pid}/export/docx`}>
             <Icon name="download" /> DOCX
           </a>
@@ -35,8 +33,7 @@ export default function ExportScreen() {
           <a className="btn" href={`/api/projects/${pid}/export/json`} target="_blank">
             <Icon name="download" /> JSON
           </a>
-        </div>
-      </div>
+        </>} />
 
       {err && <ErrorBox error={err} />}
 

@@ -3,7 +3,7 @@ import { useNavigate, useParams } from 'react-router-dom'
 import { api, fmt } from '../api'
 import type { LossCell, TailingsReport } from '../types'
 import {
-  Badge, ErrorBox, Icon, Panel, SectionLabel, Segmented, Spinner, StatCard,
+  Badge, ErrorBox, Icon, PageHeader, Panel, SectionLabel, Segmented, Spinner, StatCard,
 } from '../components/common'
 
 const FORMS = ['Раскрытый Pnt/Cp', 'Закрытый Pnt/Cp', 'Примесь в пирротине',
@@ -99,19 +99,11 @@ export default function Report() {
 
   return (
     <div className="space-y-4 animate-in">
-      {/* шапка экрана */}
-      <div className="flex items-center gap-3 flex-wrap">
-        <h1 className="text-xl font-extrabold">Разбор отчёта</h1>
-        {reports.length > 1 && (
-          <Segmented
-            options={reports.map(r => r.tail_type)}
-            value={tailType}
-            onChange={setTailType}
-          />
-        )}
-        <input ref={fileRef} type="file" accept=".xlsx" className="hidden"
-          onChange={e => e.target.files?.[0] && upload(e.target.files[0])} />
-        <div className="ml-auto flex items-center gap-2">
+      <PageHeader title="Разбор отчёта"
+        actions={<>
+          {reports.length > 1 && (
+            <Segmented options={reports.map(r => r.tail_type)} value={tailType} onChange={setTailType} />
+          )}
           <button className="btn" disabled={uploading} onClick={() => fileRef.current?.click()}>
             <Icon name="refresh" />
             {uploading ? 'Разбираю…' : 'Заменить файл'}
@@ -119,8 +111,9 @@ export default function Report() {
           <button className="btn btn-primary" onClick={() => nav(`/p/${pid}/map`)}>
             Подтвердить <Icon name="arrowRight" /> Диагностика
           </button>
-        </div>
-      </div>
+        </>} />
+      <input ref={fileRef} type="file" accept=".xlsx" className="hidden"
+        onChange={e => e.target.files?.[0] && upload(e.target.files[0])} />
 
       {err && <ErrorBox error={err} />}
 

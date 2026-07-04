@@ -29,7 +29,9 @@ services:
     depends_on:
       - backend
     ports:
-      - "127.0.0.1:8012:80"      # только localhost; наружу — через системный nginx
+      # по умолчанию только localhost (за системным nginx). Для деплоя «по порту»
+      # без домена: WEB_BIND=0.0.0.0:8080 docker compose ... up -d
+      - "${WEB_BIND:-127.0.0.1:8012}:80"
 
 volumes:
   nornickel_storage:

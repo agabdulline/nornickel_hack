@@ -22,6 +22,34 @@
                         └────────────────────────────────┘
 ```
 
+## Быстрый старт на чистом сервере (по порту, без домена)
+
+Нужен только **Docker**. Данные кейса (`data/`) и `.env` не в git — заливаем всё дерево одним rsync-ом.
+
+**На своей машине** (доставить код + данные + ключи):
+```bash
+rsync -az --exclude=node_modules --exclude=.venv --exclude=dist \
+  --exclude=storage --exclude=models_cache --exclude=__pycache__ --exclude=.git \
+  ./ USER@SERVER:/opt/nornickel/
+```
+
+**На сервере** (`cd /opt/nornickel`):
+```bash
+curl -fsSL https://get.docker.com | sh                            # 1. Docker (если ещё нет)
+cp -n .env.example .env    # 2. конфиг (если .env не приехал); впишите LLM_API_KEY — без него моки
+DC="docker compose -f deploy/docker-compose.yml"
+$DC build                                                         # 3. сборка образов
+$DC run --rm backend python -u scripts/demo_seed.py               # 4. демо-данные (опц.; на CPU ~минуты)
+WEB_BIND=0.0.0.0:8080 $DC up -d                                   # 5. запуск на :8080
+```
+
+Открыть **`http://SERVER:8080`** (файрвол: `sudo ufw allow 8080`). Здоровье: `curl http://localhost:8080/api/health`.
+
+- Порт меняется в `WEB_BIND` (напр. `0.0.0.0:80`).
+- Шаг 4 (сид) — **отдельный one-off контейнер до `up`**, чтобы не конфликтовать за индекс БЗ с работающим бэкендом. Можно пропустить — отчёты и PDF грузятся через UI; тогда шаги 3+5 сворачиваются в `WEB_BIND=0.0.0.0:8080 $DC up -d --build`.
+
+---
+
 ## Что где на этом сервере (`feedly`, 81.26.178.170)
 
 | | |

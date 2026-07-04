@@ -25,6 +25,11 @@ log = logging.getLogger("kb.index")
 
 RRF_K = 60
 CAND = 40  # кандидатов с каждой ветки до слияния
+# вес dense-ветки в RRF: калиброван на ручной валидации корпуса (перебор
+# 1.0/1.3/1.5/2.0 по 6 экспертным запросам); также поднимает кросс-языковые
+# совпадения (русский запрос -> английский/китайский источник), которые
+# BM25-ветка не видит вовсе
+DENSE_WEIGHT = 2.0
 
 
 def detect_lang(text: str) -> str:
@@ -35,6 +40,37 @@ def detect_lang(text: str) -> str:
     lat = sum(1 for ch in sample if "a" <= ch.lower() <= "z")
     best = max(("ru", cyr), ("zh", cjk), ("en", lat), key=lambda kv: kv[1])
     return best[0] if best[1] > 0 else "ru"
+
+
+# темы источников — для группировки в БЗ и включения/выключения подборок под кейс
+TOPICS = ["флотация", "измельчение и классификация", "дробление",
+          "металлургия благородных металлов", "прочее"]
+
+_TOPIC_STEMS: dict[str, tuple[str, ...]] = {
+    "флотация": ("флотац", "пенн", "собират", "ксантог", "аэрац", "депресс",
+                 "пирротин", "пентланд", "реагент", "flotation", "froth",
+                 "collector", "depressant", "浮选", "抑制"),
+    "измельчение и классификация": ("измельч", "мельниц", "классифик",
+                                    "гидроциклон", "грохо", "помол", "футеров",
+                                    "шаров", "насадк", "mill", "grind", "hydrocyclon",
+                                    "screen", "classif", "磨矿", "分级", "旋流器", "钢球"),
+    "дробление": ("дробл", "дробилк", "щеков", "конусн", "crush", "破碎"),
+    "металлургия благородных металлов": ("золот", "серебр", "благородн", "упорн",
+                                         "цианир", "автоклав", "gold", "silver",
+                                         "refractory", "cyanid", "金", "浸出"),
+}
+
+
+def doc_topic(texts: list[str]) -> str:
+    """Тема документа: подсчёт вхождений тематических стемов по пробам текста.
+    Детерминированно; при нуле совпадений — «прочее»."""
+    sample = " ".join(t[:3000] for t in texts[:12]).lower()
+    if not sample.strip():
+        return "прочее"
+    scores = {t: sum(sample.count(s) for s in stems)
+              for t, stems in _TOPIC_STEMS.items()}
+    best = max(_TOPIC_STEMS, key=lambda t: scores[t])
+    return best if scores[best] > 0 else "прочее"
 
 
 def doc_lang(texts: list[str]) -> str:
@@ -82,7 +118,7 @@ class KBIndex:
             with self._chunks_path.open(encoding="utf-8") as f:
                 self.chunks = [json.loads(line) for line in f if line.strip()]
         self._bm25 = None
-        # миграция старых индексов: докам без lang/enabled проставляем дефолты
+        # миграция старых индексов: докам без lang/enabled/topic — дефолты
         changed = False
         for doc_id, d in self.docs.items():
             if "enabled" not in d:
@@ -91,6 +127,10 @@ class KBIndex:
             if "lang" not in d:
                 d["lang"] = doc_lang([c["text"] for c in self.chunks
                                       if c["doc_id"] == doc_id])
+                changed = True
+            if "topic" not in d:
+                d["topic"] = doc_topic([c["text"] for c in self.chunks
+                                        if c["doc_id"] == doc_id])
                 changed = True
         if changed:
             with self._lock:
@@ -133,10 +173,13 @@ class KBIndex:
                     "text": ch["text"],
                 })
             prev = self.docs.get(doc_id, {})
+            texts = [ch["text"] for ch in chunks]
             self.docs[doc_id] = {"source": source, "pages": len(pages),
                                  "chunks": len(chunks), "status": status,
-                                 "lang": doc_lang([ch["text"] for ch in chunks])
-                                 if chunks else prev.get("lang", "ru"),
+                                 "lang": doc_lang(texts) if chunks
+                                 else prev.get("lang", "ru"),
+                                 "topic": doc_topic(texts) if chunks
+                                 else prev.get("topic", "прочее"),
                                  "enabled": prev.get("enabled", True)}
             self._bm25 = None
             self._save()
@@ -254,11 +297,15 @@ class KBIndex:
     def _disabled_docs(self) -> set[str]:
         return {doc_id for doc_id, d in self.docs.items() if d.get("enabled") is False}
 
-    def search(self, query: str, k: int = 5) -> list[dict]:
+    def search(self, query: str, k: int = 5, dense_only: bool = False) -> list[dict]:
         """Гибрид BM25 + dense через RRF. Деградирует до BM25-only без модели.
-        Выключенные пользователем источники (enabled=false) не участвуют."""
+        Выключенные пользователем источники (enabled=false) не участвуют.
+        dense_only=True — только векторная ветка: кросс-языковые совпадения
+        (русский запрос -> en/zh источник), которые BM25 глушит в гибриде;
+        без dense-модели тихо деградирует к обычному гибриду."""
         # BM25-часть — под локом: delete_document/add_document из других
         # потоков реассайнят chunks и сбрасывают _bm25 (иначе NoneType/рассинхрон)
+        skip_bm25 = dense_only and self.use_dense
         with self._lock:
             if not self.chunks:
                 return []
@@ -267,21 +314,23 @@ class KBIndex:
                              if doc_id in off)
             by_id = {c["chunk_id"]: c for c in self.chunks if c["doc_id"] not in off}
             ranks: dict[str, float] = {}
+            bm25_scores: dict[str, float] = {}
+            bm25_order: list[int] = []
 
-            self._ensure_bm25()
-            q_tokens = set(tokenize(query))
-            scores = self._bm25.get_scores(tokenize(query))
-            # кандидаты — только чанки, содержащие хотя бы один токен запроса
-            # (BM25Plus даёт положительный baseline даже без совпадений)
-            cand_idx = [i for i in range(len(self.chunks))
-                        if self._token_sets[i] & q_tokens
-                        and self.chunks[i]["doc_id"] not in off]
-            bm25_order = sorted(cand_idx, key=lambda i: -scores[i])[:CAND]
-            bm25_scores = {}
-            for rank, idx in enumerate(bm25_order):
-                cid = self.chunks[idx]["chunk_id"]
-                ranks[cid] = ranks.get(cid, 0) + 1.0 / (RRF_K + rank + 1)
-                bm25_scores[cid] = float(scores[idx])
+            if not skip_bm25:
+                self._ensure_bm25()
+                q_tokens = set(tokenize(query))
+                scores = self._bm25.get_scores(tokenize(query))
+                # кандидаты — только чанки, содержащие хотя бы один токен запроса
+                # (BM25Plus даёт положительный baseline даже без совпадений)
+                cand_idx = [i for i in range(len(self.chunks))
+                            if self._token_sets[i] & q_tokens
+                            and self.chunks[i]["doc_id"] not in off]
+                bm25_order = sorted(cand_idx, key=lambda i: -scores[i])[:CAND]
+                for rank, idx in enumerate(bm25_order):
+                    cid = self.chunks[idx]["chunk_id"]
+                    ranks[cid] = ranks.get(cid, 0) + 1.0 / (RRF_K + rank + 1)
+                    bm25_scores[cid] = float(scores[idx])
 
         dense_used = False
         if self._dense_ready():
@@ -298,7 +347,8 @@ class KBIndex:
                     dense_rank = 0
                     for cid in got["ids"][0]:
                         if cid in by_id:
-                            ranks[cid] = ranks.get(cid, 0) + 1.0 / (RRF_K + dense_rank + 1)
+                            ranks[cid] = ranks.get(cid, 0) + \
+                                DENSE_WEIGHT / (RRF_K + dense_rank + 1)
                             dense_rank += 1
                             if dense_rank >= CAND:
                                 break

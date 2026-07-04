@@ -219,6 +219,11 @@ const LANG_LABEL: Record<string, string> = { ru: 'Русский', en: 'English'
 // неизвестный код языка не должен прятать документ — считаем русским
 const langOf = (d: KbDoc) => (LANGS as readonly string[]).includes(d.lang ?? '') ? d.lang! : 'ru'
 
+// порядок тем в таблице; неизвестная тема падает в «прочее»
+const TOPIC_ORDER = ['флотация', 'измельчение и классификация', 'дробление',
+  'металлургия благородных металлов', 'прочее']
+const topicOf = (d: KbDoc) => TOPIC_ORDER.includes(d.topic ?? '') ? d.topic! : 'прочее'
+
 /** Модалка-читалка источника: вкладки «Текст» (чанки постранично) и
  * «Исходник» (оригинальный PDF/TXT во встроенном просмотрщике). */
 function DocPreviewModal({ doc, onClose }: { doc: KbDoc; onClose: () => void }) {
@@ -372,6 +377,15 @@ export default function KB() {
     catch (e) { setErr(String(e)); load() }
   }
 
+  // тумблер целой темы: если хоть один включён — выключаем все, иначе включаем все
+  const toggleTopic = async (group: KbDoc[]) => {
+    const next = !group.some(d => d.enabled !== false)
+    const ids = new Set(group.map(d => d.doc_id))
+    setDocs(prev => prev.map(x => ids.has(x.doc_id) ? { ...x, enabled: next } : x))
+    try { await Promise.all(group.map(d => api.kbSetEnabled(d.doc_id, next))) }
+    catch (e) { setErr(String(e)); load() }
+  }
+
   const deleteDoc = async (d: KbDoc) => {
     if (!window.confirm(`Удалить источник «${d.source}» из базы знаний?\n`
       + 'Чанки и векторы будут удалены безвозвратно; цитаты уже созданных '
@@ -468,36 +482,59 @@ export default function KB() {
                 <th className="w-8"></th>
               </tr>
             </thead>
-            <tbody className="stagger">
-              {tabDocs.map(d => {
-                const on = d.enabled !== false
-                return (
-                  <tr key={d.doc_id} className={on ? '' : 'opacity-55'}>
-                    <td><SearchSwitch on={on} onToggle={() => toggleDoc(d)} /></td>
-                    <td className="max-w-md">
-                      <button type="button"
-                        className="text-left truncate max-w-full hover:text-brand hover:underline underline-offset-2 cursor-pointer align-middle"
-                        title="Открыть источник для чтения"
-                        onClick={() => setPreview(d)}>
-                        {d.source}
-                      </button>
-                    </td>
-                    <td><Badge>{LANG_LABEL[langOf(d)]}</Badge></td>
-                    <td className="num text-right">{d.pages}</td>
-                    <td className="num text-right">{d.chunks}</td>
-                    <td><DocStatus d={d} /></td>
-                    <td>
-                      <button type="button"
-                        className="btn btn-ghost btn-sm text-danger px-1.5"
-                        title="Удалить источник из базы знаний"
-                        onClick={() => deleteDoc(d)}>
-                        <Icon name="trash" className="w-4 h-4" />
-                      </button>
+            {TOPIC_ORDER.map(topic => {
+              const group = tabDocs.filter(d => topicOf(d) === topic)
+              if (group.length === 0) return null
+              const active = group.filter(d => d.enabled !== false).length
+              return (
+                <tbody key={topic} className="stagger">
+                  <tr className="bg-surface-2/60">
+                    <td colSpan={7} className="py-1.5">
+                      <span className="inline-flex items-center gap-3">
+                        <span className="text-xs font-semibold uppercase tracking-wide text-muted">{topic}</span>
+                        <span className="num text-xs text-faint">{active}/{group.length} в поиске</span>
+                        <button type="button"
+                          className="text-xs text-brand hover:underline underline-offset-2 cursor-pointer"
+                          title="Включить или выключить все источники темы — подборка под кейс"
+                          onClick={() => toggleTopic(group)}>
+                          {active > 0 ? 'выключить тему' : 'включить тему'}
+                        </button>
+                      </span>
                     </td>
                   </tr>
-                )
-              })}
-              {tabDocs.length === 0 && (
+                  {group.map(d => {
+                    const on = d.enabled !== false
+                    return (
+                      <tr key={d.doc_id} className={on ? '' : 'opacity-55'}>
+                        <td><SearchSwitch on={on} onToggle={() => toggleDoc(d)} /></td>
+                        <td className="max-w-md">
+                          <button type="button"
+                            className="text-left truncate max-w-full hover:text-brand hover:underline underline-offset-2 cursor-pointer align-middle"
+                            title="Открыть источник для чтения"
+                            onClick={() => setPreview(d)}>
+                            {d.source}
+                          </button>
+                        </td>
+                        <td><Badge>{LANG_LABEL[langOf(d)]}</Badge></td>
+                        <td className="num text-right">{d.pages}</td>
+                        <td className="num text-right">{d.chunks}</td>
+                        <td><DocStatus d={d} /></td>
+                        <td>
+                          <button type="button"
+                            className="btn btn-ghost btn-sm text-danger px-1.5"
+                            title="Удалить источник из базы знаний"
+                            onClick={() => deleteDoc(d)}>
+                            <Icon name="trash" className="w-4 h-4" />
+                          </button>
+                        </td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              )
+            })}
+            {tabDocs.length === 0 && (
+              <tbody>
                 <tr>
                   <td colSpan={7} className="text-center py-8 text-faint">
                     {docs.length === 0
@@ -505,8 +542,8 @@ export default function KB() {
                       : 'Источников на этом языке пока нет — загрузите PDF или TXT.'}
                   </td>
                 </tr>
-              )}
-            </tbody>
+              </tbody>
+            )}
           </table>
         </div>
       </Panel>

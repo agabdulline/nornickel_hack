@@ -147,7 +147,7 @@ export interface ChatMeta {
 export interface KbDoc {
   doc_id: string; source: string; pages: number; chunks: number; status: string;
   ocr_done?: number; error?: string;
-  lang?: 'ru' | 'en' | 'zh'; enabled?: boolean;
+  lang?: 'ru' | 'en' | 'zh'; enabled?: boolean; topic?: string;
 }
 export interface KbHit {
   chunk_id: string; text: string; source: string; page: number; score: number;

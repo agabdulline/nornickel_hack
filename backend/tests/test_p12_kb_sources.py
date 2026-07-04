@@ -183,6 +183,24 @@ def test_set_doc_meta_does_not_resurrect(tmp_path):
     assert "d1" not in idx.docs, "запись-призрак не создана"
 
 
+def test_doc_topic_classification(tmp_path):
+    """Тема источника: детерминированная классификация + миграция + PATCH."""
+    from backend.app.kb.index import doc_topic
+    assert doc_topic([RU]) == "флотация"
+    assert doc_topic(["Износ футеровки шаровых мельниц и классификация в "
+                      "гидроциклонах при измельчении руды. " * 5]) == "измельчение и классификация"
+    assert doc_topic(["Извлечение золота и серебра из упорных руд "
+                      "цианированием. " * 5]) == "металлургия благородных металлов"
+    assert doc_topic(["Общий текст без ключевых слов."]) == "прочее"
+
+    idx = KBIndex(root=tmp_path, use_dense=False)
+    _add(idx, "d1", "флотация.pdf", RU)
+    assert idx.docs["d1"]["topic"] == "флотация"
+    # ручной оверрайд через set_doc_meta (PATCH)
+    idx.set_doc_meta("d1", topic="прочее")
+    assert KBIndex(root=tmp_path, use_dense=False).docs["d1"]["topic"] == "прочее"
+
+
 def test_doc_lang_tie_deterministic():
     from backend.app.kb.index import doc_lang
     assert doc_lang([RU, EN]) == "ru", "при ничьей приоритет ru"

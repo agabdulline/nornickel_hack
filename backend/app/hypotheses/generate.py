@@ -348,7 +348,13 @@ def _reground_citations(hyps: list[Hypothesis], kb_index: KBIndex,
         if len(good) >= target and not recheck_all:
             h.rationale = good
             continue  # валидных цитат достаточно — не трогаем
-        cands = kb_index.search(f"{h.title} {h.mechanism}", k=5)
+        q = f"{h.title} {h.mechanism}"
+        cands = kb_index.search(q, k=5)
+        # dense-only добавка: кросс-языковые кандидаты (en/zh источники),
+        # которых BM25-ветка гибрида не видит по русскому запросу
+        for hit in kb_index.search(q, k=4, dense_only=True):
+            if not any(c["chunk_id"] == hit["chunk_id"] for c in cands):
+                cands.append(hit)
         # при пере-оценке текущие чанки тоже кандидаты — модель может выбрать
         # из них лучший фрагмент
         for cit in good:

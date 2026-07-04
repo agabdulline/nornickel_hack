@@ -193,6 +193,11 @@ export const api = {
       total_chunks: number; offset: number; has_file?: boolean
       chunks: { chunk_id: string; page_start: number; page_end: number; text: string }[]
     }>(fetch(`/api/kb/documents/${encodeURIComponent(docId)}/preview?offset=${offset}&limit=${limit}`)),
+  kbPatchDoc: (docId: string, body: { enabled?: boolean; topic?: string }) =>
+    j<KbDoc>(fetch(`/api/kb/documents/${encodeURIComponent(docId)}`, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    })),
   kbSetEnabled: (docId: string, enabled: boolean) =>
     j<KbDoc>(fetch(`/api/kb/documents/${encodeURIComponent(docId)}`, {
       method: 'PATCH', headers: { 'Content-Type': 'application/json' },

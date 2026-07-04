@@ -792,15 +792,20 @@ def kb_document_preview(doc_id: str, offset: int = 0, limit: int = 6,
 
 
 class KbDocPatch(BaseModel):
-    enabled: bool
+    enabled: bool | None = None
+    topic: str | None = None
 
 
 @router.patch("/kb/documents/{doc_id}")
 def kb_document_patch(doc_id: str, body: KbDocPatch,
                       kb: KBIndex = Depends(get_kb)) -> dict:
-    """Вкл/выкл источника: выключенный не участвует в поиске и в НОВЫХ
-    цитатах; ранее сохранённые цитаты гипотез остаются доступными."""
-    if not kb.set_doc_meta(doc_id, enabled=body.enabled):
+    """Вкл/выкл источника (выключенный не участвует в поиске и в НОВЫХ
+    цитатах; сохранённые цитаты гипотез остаются доступными) и/или смена темы."""
+    fields = {k: v for k, v in (("enabled", body.enabled), ("topic", body.topic))
+              if v is not None}
+    if not fields:
+        raise HTTPException(422, "нечего менять: передайте enabled и/или topic")
+    if not kb.set_doc_meta(doc_id, **fields):
         raise HTTPException(404, "документ не найден")
     return {"doc_id": doc_id, **kb.docs[doc_id]}
 

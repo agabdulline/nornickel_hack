@@ -36,6 +36,8 @@ SYSTEM_CHAT = """Ты — ассистент-интерпретатор сист
   (какой экран, какое правило, какая ячейка).
 - Пиши компактно: короткие абзацы, без воды; списки — через «- » с новой строки.
 - Ссылки вставляй в текст ровно в том формате id, что дан в контексте.
+- «Здесь», «на этой странице», «эта таблица/карточка» — это про экран из поля
+  «где_сейчас_пользователь»; отвечай относительно того, что он видит.
 - Если просят график/сравнить/показать распределение чисел — добавь 1–2 графика
   СТРОГО из чисел контекста (не выдумывай и не пересчитывай): 3–10 строк,
   одна величина на график, Ni и Cu — отдельными графиками. Если графика не
@@ -48,10 +50,28 @@ SYSTEM_CHAT = """Ты — ассистент-интерпретатор сист
 Поле charts опционально — пустой список, если график не нужен."""
 
 
+# что пользователь видит на каждом экране — для вопросов «а что это тут?»
+PAGE_CONTEXT = {
+    "report": "Экран «Разбор отчёта»: сводные KPI (тоннаж, потери Ni/Cu, % извлекаемого), "
+              "таблицы крупности и минералогии по Ni и Cu, подсветка битых/восстановленных "
+              "значений с формулами восстановления, правка ячеек вручную.",
+    "map": "Экран «Карта потерь»: тепловая матрица классы×формы по Ni и Cu, граф переделов "
+           "фабрики по регламенту с подсветкой диагнозов, карточки диагнозов R1–R5 с "
+           "числами, блок «Почему не предложено» (неизвлекаемые формы), аномалии данных.",
+    "hypotheses": "Экран «Гипотезы»: ранжированный список карточек (механизм, цитаты из "
+                  "литературы, эффект в т/$, оборудование, план проверки), слайдеры весов "
+                  "ранжирования, фильтры переделов, кнопки Принять/Отклонить.",
+    "export": "Экран «Отчёт и экспорт»: топ-5 гипотез таблицей, канбан статусов, дорожная "
+              "карта испытаний (Гант: лаба → ОПИ → тираж, ромбы-ворота, конфликты "
+              "ресурсов), кнопки экспорта DOCX/CSV/JSON.",
+}
+
+
 def build_context(question: str, report: TailingsReport, diag: DiagnosticsResult,
                   hypotheses: list[Hypothesis], project: Project,
                   kb_index: KBIndex | None = None,
-                  roadmap: list[dict] | None = None) -> dict:
+                  roadmap: list[dict] | None = None,
+                  page: str | None = None) -> dict:
     """Детерминированная сборка контекста (что именно видит модель)."""
     q_low = question.lower()
 
@@ -115,6 +135,8 @@ def build_context(question: str, report: TailingsReport, diag: DiagnosticsResult
 
     return {
         "вопрос": question,
+        "где_сейчас_пользователь": PAGE_CONTEXT.get(page or "",
+                                                    "экран не определён"),
         "проект": {"название": project.name or None, "объект": project.plant,
                    "фабрика": project.factory, "цель": project.goal or None,
                    "ограничения": project.constraints or None},
@@ -142,9 +164,10 @@ def _title_mentioned(title: str, q_low: str) -> bool:
 def answer(question: str, history: list[dict], report: TailingsReport,
            diag: DiagnosticsResult, hypotheses: list[Hypothesis], project: Project,
            kb_index: KBIndex | None = None, llm: LLMClient | None = None,
-           roadmap: list[dict] | None = None) -> ChatAnswer:
+           roadmap: list[dict] | None = None, page: str | None = None) -> ChatAnswer:
     llm = llm or default_client
-    ctx = build_context(question, report, diag, hypotheses, project, kb_index, roadmap)
+    ctx = build_context(question, report, diag, hypotheses, project, kb_index,
+                        roadmap, page)
 
     # STRONG — только для длинной истории или сравнения гипотез
     strong = len(history) > 6 or "сравн" in question.lower()

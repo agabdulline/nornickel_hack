@@ -229,7 +229,9 @@ def test_context_has_ranks_roadmap_and_formula(tmp_path):
                 "resource": "лаборатория", "shifted_reason": None}]
 
     ctx = build_context("почему первая гипотеза выше второй?", report, diag,
-                        hyps, project, kb, roadmap=roadmap)
+                        hyps, project, kb, roadmap=roadmap, page="hypotheses")
+    # ассистент знает, какой экран открыт («здесь», «на этой странице»)
+    assert "Гипотезы" in ctx["где_сейчас_пользователь"]
     assert ctx["гипотезы_кратко"][0]["№"] == 1
     assert ctx["гипотезы_кратко"][0]["цитат_подтверждено"] == 1
     assert "score" in ctx["формула_score"]

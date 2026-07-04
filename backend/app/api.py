@@ -479,6 +479,7 @@ class ChatIn(BaseModel):
     history: list[dict] = Field(default_factory=list)   # опционально: оверрайд истории
     tail_type: str | None = None
     chat_id: str | None = None    # без него — последний диалог проекта (или новый)
+    page: str | None = None       # экран, с которого спрашивают: report|map|hypotheses|export
 
 
 class ChatCreateIn(BaseModel):
@@ -538,7 +539,7 @@ def project_chat(pid: str, body: ChatIn, store: Store = Depends(get_store),
                                                                 chat_id=chat["id"])]
     ans = chat_mod.answer(body.message, history, report, diag, hyps,
                           project, kb_index=kb, llm=llm_client,
-                          roadmap=store.get_roadmap(pid))
+                          roadmap=store.get_roadmap(pid), page=body.page)
     store.add_chat_message(pid, "user", body.message, chat_id=chat["id"])
     store.add_chat_message(pid, "assistant", ans.text,
                            refs=[r.model_dump() for r in ans.references],

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useLocation, useNavigate } from 'react-router-dom'
 import { api, fmt } from '../api'
 import type { ChatChart, ChatMeta, ChatReference } from '../types'
 import { ChunkModal, Icon, Chip, SectionLabel } from './common'
@@ -19,6 +19,30 @@ const SUGGESTIONS = [
   'Что неизвлекаемо и почему?',
   'Покажи график потерь по классам крупности',
 ]
+
+// подсказки под конкретный экран (fallback — общие SUGGESTIONS)
+const SUGGESTIONS_BY_PAGE: Record<string, string[]> = {
+  report: [
+    'Какие проблемы нашлись в данных отчёта?',
+    'Что значат восстановленные значения?',
+    'Объясни главный диагноз',
+  ],
+  map: [
+    'Объясни главный диагноз',
+    'Что неизвлекаемо и почему?',
+    'Покажи график потерь по классам крупности',
+  ],
+  hypotheses: [
+    'Почему гипотеза №1 первая?',
+    'Сравни топ-3 гипотезы',
+    'Какие гипотезы не требуют нового оборудования?',
+  ],
+  export: [
+    'Когда стартуют испытания принятых гипотез?',
+    'Почему стадии на дорожной карте сдвинуты?',
+    'Что войдёт в DOCX-отчёт?',
+  ],
+}
 
 // Подсказки для режима «без проекта» — общий вопрос к базе знаний.
 const KB_SUGGESTIONS = [
@@ -111,6 +135,9 @@ function ChartBlock({ chart }: { chart: ChatChart }) {
  *  без `pid` (на главной) — вопрос к базе знаний, история в localStorage. */
 export default function ChatPanel({ pid, onClose }: { pid?: string; onClose: () => void }) {
   const nav = useNavigate()
+  const { pathname } = useLocation()
+  // какой экран проекта открыт — ассистент получает это с каждым вопросом
+  const page = pathname.match(/^\/p\/[^/]+\/(report|map|hypotheses|export)/)?.[1]
   const kbMode = !pid
   const [chats, setChats] = useState<ChatMeta[]>([])
   const [active, setActive] = useState<string | null>(null)
@@ -183,7 +210,7 @@ export default function ChatPanel({ pid, onClose }: { pid?: string; onClose: () 
           cid = (await api.chatCreate(pid)).id
           setActive(cid)
         }
-        const ans = await api.chat(pid, text, cid)
+        const ans = await api.chat(pid, text, cid, page)
         setMsgs(m => [...m, { role: 'assistant', content: ans.text,
                               refs: ans.references, charts: ans.charts }])
         refreshChats()   // подхватить авто-заголовок диалога
@@ -320,7 +347,8 @@ export default function ChatPanel({ pid, onClose }: { pid?: string; onClose: () 
             <div className="mt-5">
               <SectionLabel>С чего начать</SectionLabel>
               <div className="flex flex-col items-start gap-2 stagger">
-                {(kbMode ? KB_SUGGESTIONS : SUGGESTIONS).map(s => (
+                {(kbMode ? KB_SUGGESTIONS
+                         : SUGGESTIONS_BY_PAGE[page ?? ''] ?? SUGGESTIONS).map(s => (
                   <Chip key={s} onClick={() => send(s)}>{s}</Chip>
                 ))}
               </div>

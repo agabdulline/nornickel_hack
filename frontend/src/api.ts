@@ -139,11 +139,12 @@ export const api = {
       body: JSON.stringify({ action, reason }),
     })),
 
-  // историю хранит сервер (по диалогам) — клиент шлёт вопрос и chat_id
-  chat: (pid: string, message: string, chatId?: string) =>
+  // историю хранит сервер (по диалогам) — клиент шлёт вопрос, chat_id
+  // и текущий экран (report|map|hypotheses|export) для вопросов «здесь/на этой странице»
+  chat: (pid: string, message: string, chatId?: string, page?: string) =>
     j<ChatAnswer & { chat_id: string }>(fetch(`/api/projects/${pid}/chat`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ message, chat_id: chatId }),
+      body: JSON.stringify({ message, chat_id: chatId, page }),
     })),
   chats: (pid: string) => j<ChatMeta[]>(fetch(`/api/projects/${pid}/chats`)),
   chatCreate: (pid: string) =>

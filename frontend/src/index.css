@@ -328,14 +328,29 @@ input[type="range"] { accent-color: var(--c-brand); }
 }
 
 /* подсветка цели, на которую указал ассистент в чате (см. highlight.ts):
-   кольцо цветом бренда, гаснет к концу ~5 секунд */
-@keyframes hl-flash {
-  0%   { box-shadow: 0 0 0 3px var(--c-brand), 0 0 0 9px color-mix(in srgb, var(--c-brand) 22%, transparent); }
-  70%  { box-shadow: 0 0 0 3px var(--c-brand), 0 0 0 9px color-mix(in srgb, var(--c-brand) 22%, transparent); }
-  100% { box-shadow: 0 0 0 0 transparent, 0 0 0 0 transparent; }
+   БЕГУЩИЙ пунктир — намеренно отличается от штатных подсветок данных
+   (янтарные восстановленные ячейки, заливка теплокарты), чтобы было видно,
+   что это указка ассистента; гаснет к концу ~5 секунд */
+.flash-highlight { position: relative; z-index: 5; }
+.flash-highlight::after {
+  content: ""; position: absolute; inset: -4px; z-index: 30; pointer-events: none;
+  border-radius: calc(var(--radius-md, 8px) + 2px);
+  background-image:
+    repeating-linear-gradient(90deg, var(--c-brand) 0 8px, transparent 8px 15px),
+    repeating-linear-gradient(90deg, var(--c-brand) 0 8px, transparent 8px 15px),
+    repeating-linear-gradient(0deg,  var(--c-brand) 0 8px, transparent 8px 15px),
+    repeating-linear-gradient(0deg,  var(--c-brand) 0 8px, transparent 8px 15px);
+  background-size: 100% 2px, 100% 2px, 2px 100%, 2px 100%;
+  background-position: 0 0, 0 100%, 0 0, 100% 0;
+  background-repeat: no-repeat;
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--c-brand) 12%, transparent);
+  animation: hl-ants .5s linear infinite, hl-fade 5s ease forwards;
 }
-.flash-highlight {
-  animation: hl-flash 5s ease-out;
-  position: relative; z-index: 5;
-  border-radius: var(--radius-md, 8px);
+/* сдвиг на полный шаг пунктира (15px) за цикл — дорожка «бежит» по контуру */
+@keyframes hl-ants { to { background-position: 15px 0, -15px 100%, 0 -15px, 100% 15px; } }
+@keyframes hl-fade { 0%, 78% { opacity: 1 } 100% { opacity: 0 } }
+
+@media (prefers-reduced-motion: reduce) {
+  /* без анимаций пунктир остаётся статичным и видимым, пока JS не снимет класс */
+  .flash-highlight::after { animation: none !important; opacity: 1; }
 }

@@ -443,7 +443,7 @@ from .parser.docx import expert_titles_for_plant  # noqa: E402 — исполь�
 # ---------- чат-интерпретатор (8.1) ----------
 class ChatIn(BaseModel):
     message: str
-    history: list[dict] = Field(default_factory=list)
+    history: list[dict] = Field(default_factory=list)   # опционально: оверрайд истории
     tail_type: str | None = None
 
 
@@ -455,13 +455,34 @@ def project_chat(pid: str, body: ChatIn, store: Store = Depends(get_store),
     got = store.get_reports(pid)
     if not got:
         raise HTTPException(404, "сначала загрузите отчёт")
-    reports, _meta = got
+    reports, meta = got
     report = _pick_report(reports, body.tail_type)
-    diag = run_diagnostics(report)
+    # диагнозы с привязкой к схеме фабрики — как на экране диагностики
+    _factory, flowsheet = _project_flowsheet(pid, store)
+    diag = run_diagnostics(report, flowsheet=flowsheet, meta=meta.get("parse_meta"))
     hyps = store.get_hypotheses(pid)
-    ans = chat_mod.answer(body.message, body.history, report, diag, hyps,
-                          project, kb_index=kb, llm=llm_client)
+    # история хранится на сервере; клиентская (если прислали) имеет приоритет
+    history = body.history or [{"role": m["role"], "content": m["content"]}
+                               for m in store.get_chat_messages(pid, limit=12)]
+    ans = chat_mod.answer(body.message, history, report, diag, hyps,
+                          project, kb_index=kb, llm=llm_client,
+                          roadmap=store.get_roadmap(pid))
+    store.add_chat_message(pid, "user", body.message)
+    store.add_chat_message(pid, "assistant", ans.text,
+                           refs=[r.model_dump() for r in ans.references])
     return ans.model_dump()
+
+
+@router.get("/projects/{pid}/chat/history")
+def chat_history(pid: str, store: Store = Depends(get_store)) -> dict:
+    _project_or_404(pid, store)
+    return {"messages": store.get_chat_messages(pid)}
+
+
+@router.delete("/projects/{pid}/chat/history")
+def chat_clear(pid: str, store: Store = Depends(get_store)) -> dict:
+    _project_or_404(pid, store)
+    return {"cleared": store.clear_chat(pid)}
 
 
 # ---------- дорожная карта (8.2) ----------

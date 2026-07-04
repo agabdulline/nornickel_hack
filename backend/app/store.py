@@ -50,6 +50,11 @@ CREATE TABLE IF NOT EXISTS line_materials (
   id TEXT PRIMARY KEY, line_id TEXT, material_id TEXT, name TEXT,
   quantity REAL, unit TEXT
 );
+CREATE TABLE IF NOT EXISTS chat_messages (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, project_id TEXT, role TEXT,
+  content TEXT, refs_json TEXT, created_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_chat_project ON chat_messages(project_id);
 """
 
 # сид онтологии оборудования (раздел «Ограничения») для демо-линии кейса;
@@ -275,7 +280,7 @@ class Store:
         Возвращает False, если проекта не было."""
         with self._lock:
             cur = self._conn.execute("DELETE FROM projects WHERE id=?", (pid,))
-            for table in ("reports", "hypotheses", "feedback", "roadmaps"):
+            for table in ("reports", "hypotheses", "feedback", "roadmaps", "chat_messages"):
                 self._conn.execute(f"DELETE FROM {table} WHERE project_id=?", (pid,))
             self._conn.commit()
             return cur.rowcount > 0
@@ -524,6 +529,35 @@ class Store:
             rows = self._conn.execute(
                 "SELECT * FROM feedback WHERE project_id=? ORDER BY id", (project_id,)).fetchall()
             return [dict(r) for r in rows]
+
+    # ---------- чат-ассистент ----------
+    def add_chat_message(self, project_id: str, role: str, content: str,
+                         refs: list[dict] | None = None):
+        with self._lock:
+            self._conn.execute(
+                "INSERT INTO chat_messages (project_id, role, content, refs_json, created_at) "
+                "VALUES (?,?,?,?,?)",
+                (project_id, role, content,
+                 json.dumps(refs or [], ensure_ascii=False), _now()))
+            self._conn.commit()
+
+    def get_chat_messages(self, project_id: str, limit: int = 100) -> list[dict]:
+        """Последние `limit` сообщений в хронологическом порядке."""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT role, content, refs_json, created_at FROM chat_messages "
+                "WHERE project_id=? ORDER BY id DESC LIMIT ?",
+                (project_id, limit)).fetchall()
+        return [{"role": r["role"], "content": r["content"],
+                 "references": json.loads(r["refs_json"] or "[]"),
+                 "created_at": r["created_at"]} for r in reversed(rows)]
+
+    def clear_chat(self, project_id: str) -> int:
+        with self._lock:
+            cur = self._conn.execute("DELETE FROM chat_messages WHERE project_id=?",
+                                     (project_id,))
+            self._conn.commit()
+            return cur.rowcount
 
     # ---------- дорожная карта ----------
     def save_roadmap(self, project_id: str, items: list[dict]):

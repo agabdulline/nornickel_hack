@@ -1,7 +1,15 @@
 import type {
-  ChatAnswer, DiagnosticsResult, Equipment, FlowsheetData, Hypothesis, KbDoc, Line,
-  LineMaterial, Material, Project, ProjectConstraints, RoadmapItem, TailingsReport,
+  ChatAnswer, ChatReference, DiagnosticsResult, Equipment, FlowsheetData, Hypothesis,
+  KbDoc, Line, LineMaterial, Material, Project, ProjectConstraints, RoadmapItem,
+  TailingsReport,
 } from './types'
+
+export interface ChatHistoryMsg {
+  role: 'user' | 'assistant'
+  content: string
+  references: ChatReference[]
+  created_at?: string
+}
 
 async function j<T>(pending: Promise<Response>): Promise<T> {
   const resp = await pending
@@ -125,11 +133,16 @@ export const api = {
       body: JSON.stringify({ action, reason }),
     })),
 
-  chat: (pid: string, message: string, history: { role: string; content: string }[]) =>
+  // историю хранит сервер — клиент шлёт только вопрос
+  chat: (pid: string, message: string) =>
     j<ChatAnswer>(fetch(`/api/projects/${pid}/chat`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ message, history }),
+      body: JSON.stringify({ message }),
     })),
+  chatHistory: (pid: string) =>
+    j<{ messages: ChatHistoryMsg[] }>(fetch(`/api/projects/${pid}/chat/history`)),
+  chatClear: (pid: string) =>
+    j<{ cleared: number }>(fetch(`/api/projects/${pid}/chat/history`, { method: 'DELETE' })),
 
   roadmapBuild: (pid: string) =>
     j<RoadmapItem[]>(fetch(`/api/projects/${pid}/roadmap/build`, { method: 'POST' })),

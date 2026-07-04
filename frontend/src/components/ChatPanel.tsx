@@ -4,12 +4,19 @@ import { api } from '../api'
 import type { ChatReference } from '../types'
 import { ChunkModal, Icon, Chip, SectionLabel } from './common'
 
-interface Msg { role: 'user' | 'assistant'; content: string; refs?: ChatReference[] }
+interface Msg {
+  role: 'user' | 'assistant'
+  content: string
+  refs?: ChatReference[]
+  error?: boolean      // сообщение-ошибка с кнопкой «Повторить»
+  retryText?: string   // какой вопрос пересылать при ретрае
+}
 
 const SUGGESTIONS = [
   'Объясни главный диагноз',
   'Почему гипотеза №1 первая?',
   'Что неизвлекаемо и почему?',
+  'Когда стартуют испытания принятых гипотез?',
 ]
 
 // Подсказки для режима «без проекта» — общий вопрос к базе знаний.
@@ -19,28 +26,106 @@ const KB_SUGGESTIONS = [
   'Зачем доизмельчать сростки пентландита?',
 ]
 
-/** Чат-ассистент. С `pid` — интерпретатор проекта (отчёт/диагнозы/гипотезы);
- *  без `pid` (напр. на главной) — общий вопрос к базе знаний с цитатами. */
+const KB_STORE_KEY = 'fh-kb-chat'
+
+function loadKbMsgs(): Msg[] {
+  try {
+    const raw = localStorage.getItem(KB_STORE_KEY)
+    const parsed = raw ? JSON.parse(raw) : []
+    return Array.isArray(parsed) ? parsed : []
+  } catch { return [] }
+}
+
+/** Ссылка по тексту в квадратных скобках: сперва точное совпадение со списком
+ *  references ответа, затем распознавание по форме id. */
+function matchRef(inner: string, refs: ChatReference[]): ChatReference | null {
+  const exact = refs.find(r => r.id === inner)
+  if (exact) return exact
+  if (/^R\d[а-яa-z]?$/i.test(inner)) return { type: 'rule', id: inner }
+  if (/^[0-9a-f]{8,}:\d+$/i.test(inner)) return { type: 'chunk', id: inner }
+  if (/^h\d{2}-[0-9a-f]+$/i.test(inner)) return { type: 'hypothesis', id: inner }
+  if (inner.includes('/') && /\/(Ni|Cu)$/.test(inner)) return { type: 'cell', id: inner }
+  const partial = refs.find(r => inner.includes(r.id))
+  return partial ? { ...partial } : null
+}
+
+/** Текст ответа: **жирный** и кликабельные [ссылки] прямо в тексте. */
+function RichText({ text, refs, onRef }: {
+  text: string; refs: ChatReference[]; onRef: (r: ChatReference) => void
+}) {
+  const parts = text.split(/(\[[^\][\n]{1,90}\]|\*\*[^*\n]+\*\*)/g)
+  return (
+    <>
+      {parts.map((p, i) => {
+        if (p.startsWith('**') && p.endsWith('**')) return <b key={i}>{p.slice(2, -2)}</b>
+        if (p.startsWith('[') && p.endsWith(']')) {
+          const inner = p.slice(1, -1)
+          const ref = matchRef(inner, refs)
+          if (ref) return (
+            <button key={i} type="button" onClick={() => onRef(ref)}
+              className="underline decoration-dotted underline-offset-2 cursor-pointer
+                font-medium hover:opacity-80 text-left break-all"
+              style={{ color: 'var(--c-brand)' }}>
+              {inner}
+            </button>
+          )
+        }
+        return <span key={i}>{p}</span>
+      })}
+    </>
+  )
+}
+
+/** Чат-ассистент. С `pid` — интерпретатор проекта (отчёт/диагнозы/гипотезы),
+ *  история хранится на сервере и переживает закрытие панели и перезагрузку;
+ *  без `pid` (напр. на главной) — вопрос к базе знаний, история в localStorage. */
 export default function ChatPanel({ pid, onClose }: { pid?: string; onClose: () => void }) {
   const nav = useNavigate()
   const kbMode = !pid
-  const [msgs, setMsgs] = useState<Msg[]>([])
+  const [msgs, setMsgs] = useState<Msg[]>(() => (kbMode ? loadKbMsgs() : []))
+  const [histLoading, setHistLoading] = useState(!kbMode)
   const [input, setInput] = useState('')
   const [busy, setBusy] = useState(false)
   const [chunk, setChunk] = useState<string | null>(null)
   const bottomRef = useRef<HTMLDivElement>(null)
+  const inputRef = useRef<HTMLInputElement>(null)
 
-  useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [msgs])
+  // история проекта — с сервера
+  useEffect(() => {
+    if (!pid) return
+    let live = true
+    setHistLoading(true)
+    api.chatHistory(pid)
+      .then(h => {
+        if (!live) return
+        // не затираем сообщение, отправленное пока история грузилась
+        setMsgs(cur => cur.length ? cur
+          : h.messages.map(m => ({ role: m.role, content: m.content, refs: m.references })))
+      })
+      .catch(() => { /* истории нет — начинаем с чистого листа */ })
+      .finally(() => { if (live) setHistLoading(false) })
+    return () => { live = false }
+  }, [pid])
 
-  const send = async (text: string) => {
+  // история режима БЗ — в localStorage
+  useEffect(() => {
+    if (!kbMode) return
+    try { localStorage.setItem(KB_STORE_KEY, JSON.stringify(msgs.slice(-40))) } catch { /* квота */ }
+  }, [kbMode, msgs])
+
+  useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [msgs, busy])
+
+  const send = async (text: string, retry = false) => {
     if (!text.trim() || busy) return
-    const history = msgs.map(m => ({ role: m.role, content: m.content }))
-    setMsgs(m => [...m, { role: 'user', content: text }])
+    setMsgs(m => {
+      const base = retry ? m.filter(x => !x.error) : m
+      return retry ? base : [...base, { role: 'user', content: text }]
+    })
     setInput('')
     setBusy(true)
     try {
       if (pid) {
-        const ans = await api.chat(pid, text, history)
+        const ans = await api.chat(pid, text)
         setMsgs(m => [...m, { role: 'assistant', content: ans.text, refs: ans.references }])
       } else {
         const ans = await api.kbAsk(text)
@@ -48,8 +133,25 @@ export default function ChatPanel({ pid, onClose }: { pid?: string; onClose: () 
         setMsgs(m => [...m, { role: 'assistant', content: ans.answer, refs }])
       }
     } catch (e) {
-      setMsgs(m => [...m, { role: 'assistant', content: `Ошибка: ${e}` }])
-    } finally { setBusy(false) }
+      setMsgs(m => [...m, {
+        role: 'assistant', error: true, retryText: text,
+        content: `Не получилось ответить: ${e instanceof Error ? e.message : e}`,
+      }])
+    } finally {
+      setBusy(false)
+      inputRef.current?.focus()
+    }
+  }
+
+  const clear = async () => {
+    if (!window.confirm('Очистить историю диалога?')) return
+    if (pid) {
+      try { await api.chatClear(pid) } catch { /* не критично */ }
+    } else {
+      try { localStorage.removeItem(KB_STORE_KEY) } catch { /* пусто */ }
+    }
+    setMsgs([])
+    inputRef.current?.focus()
   }
 
   const openRef = (r: ChatReference) => {
@@ -82,14 +184,29 @@ export default function ChatPanel({ pid, onClose }: { pid?: string; onClose: () 
             {kbMode ? 'Отвечает по литературе с цитатами' : 'Отвечает со ссылками на источники'}
           </div>
         </div>
-        <button className="btn btn-ghost !px-2 ml-auto shrink-0" onClick={onClose} aria-label="Закрыть">
-          <Icon name="x" />
-        </button>
+        <div className="flex items-center gap-1 ml-auto shrink-0">
+          {msgs.length > 0 && (
+            <button className="btn btn-ghost !px-2" onClick={clear}
+              title="Очистить историю" aria-label="Очистить историю">
+              <Icon name="trash" className="w-4 h-4" />
+            </button>
+          )}
+          <button className="btn btn-ghost !px-2" onClick={onClose} aria-label="Закрыть">
+            <Icon name="x" />
+          </button>
+        </div>
       </header>
 
       {/* Лента сообщений */}
       <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
-        {msgs.length === 0 && (
+        {histLoading && (
+          <div className="flex items-center gap-2 text-sm animate-pulse" style={{ color: 'var(--c-faint)' }}>
+            <span className="inline-block w-2 h-2 rounded-full" style={{ background: 'var(--c-brand)' }} />
+            загружаю историю…
+          </div>
+        )}
+
+        {!histLoading && msgs.length === 0 && (
           <div className="animate-fade">
             <div className="text-sm leading-relaxed" style={{ color: 'var(--c-muted)' }}>
               {kbMode
@@ -115,10 +232,20 @@ export default function ChatPanel({ pid, onClose }: { pid?: string; onClose: () 
                 className={'max-w-[90%] px-3.5 py-2.5 text-sm text-left whitespace-pre-wrap leading-relaxed ' +
                   (isUser
                     ? 'rounded-2xl rounded-br-md text-white'
-                    : 'rounded-2xl rounded-bl-md bg-surface-2 border border-line')}
+                    : 'rounded-2xl rounded-bl-md bg-surface-2 border ' +
+                      (m.error ? 'border-danger' : 'border-line'))}
                 style={isUser ? { background: 'var(--c-brand)' } : undefined}>
-                {m.content}
+                {isUser
+                  ? m.content
+                  : <RichText text={m.content} refs={m.refs ?? []} onRef={openRef} />}
               </div>
+              {m.error && m.retryText && (
+                <div className="mt-1.5">
+                  <Chip onClick={() => send(m.retryText!, true)}>
+                    <Icon name="refresh" className="w-3.5 h-3.5" /> Повторить
+                  </Chip>
+                </div>
+              )}
               {m.refs && m.refs.length > 0 && (
                 <div className="flex flex-wrap gap-1.5 mt-1.5">
                   {m.refs.map((r, n) => (
@@ -147,7 +274,7 @@ export default function ChatPanel({ pid, onClose }: { pid?: string; onClose: () 
       {/* Форма ввода */}
       <form className="flex items-center gap-2 px-4 py-3 border-t border-line shrink-0"
         onSubmit={e => { e.preventDefault(); send(input) }}>
-        <input className="input flex-1"
+        <input ref={inputRef} className="input flex-1" autoFocus
           placeholder={kbMode ? 'Вопрос к базе знаний…' : 'Вопрос про отчёт, диагнозы, гипотезы…'}
           value={input} onChange={e => setInput(e.target.value)} disabled={busy} />
         <button className="btn btn-primary !px-3 shrink-0" disabled={busy || !input.trim()}

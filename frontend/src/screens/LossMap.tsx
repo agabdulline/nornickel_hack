@@ -3,7 +3,7 @@ import { useNavigate, useParams } from 'react-router-dom'
 import { api, fmt } from '../api'
 import type { DiagnosticsResult, FlowsheetData, FlowsheetNode, TailingsReport } from '../types'
 import {
-  Badge, EmptyBox, ErrorBox, Icon, PageHeader, Panel, SectionLabel, Spinner,
+  Badge, EmptyBox, ErrorBox, Icon, PageHeader, Panel, SectionLabel, Segmented, Spinner,
 } from '../components/common'
 
 const FORMS = ['Раскрытый Pnt/Cp', 'Закрытый Pnt/Cp', 'Примесь в пирротине',
@@ -149,6 +149,7 @@ export default function LossMap() {
   const [reports, setReports] = useState<TailingsReport[] | null>(null)
   const [tailType, setTailType] = useState<string>('')
   const [diag, setDiag] = useState<DiagnosticsResult | null>(null)
+  const [el, setEl] = useState<'Ni' | 'Cu'>('Ni')
   const [err, setErr] = useState('')
   const [openRule, setOpenRule] = useState<string | null>(null)
   const [fsInfo, setFsInfo] = useState<{ factory: string | null; flowsheet: FlowsheetData | null } | null>(null)
@@ -175,16 +176,21 @@ export default function LossMap() {
     'Отчёт ещё не загружен — начните с шага «1 · Данные».' : err} />
   if (!report || !diag) return <Spinner />
 
+  const diagnoses = diag.diagnoses.filter(d => d.element === el)
+  const notProposed = diag.not_proposed.filter(x => x.element === el)
+  const r5 = diag.issues.filter(i => i.rule?.startsWith('R5') && i.severity !== 'info')
+
   return (
     <div className="space-y-4 animate-in">
       <PageHeader title="Карта потерь"
-        subtitle="Где и в какой минеральной форме теряется металл — Ni и Cu"
+        subtitle="Где и в какой минеральной форме теряется металл"
         actions={<>
           {reports && reports.length > 1 && (
             <select className="select w-auto" value={tailType} onChange={e => setTailType(e.target.value)}>
               {reports.map(r => <option key={r.tail_type}>{r.tail_type}</option>)}
             </select>
           )}
+          <Segmented options={ELEMENTS} value={el} onChange={setEl} />
           <button className="btn btn-primary" onClick={() => nav(`/p/${pid}/hypotheses`)}>
             К гипотезам <Icon name="arrowRight" />
           </button>
@@ -195,92 +201,92 @@ export default function LossMap() {
           highlight={new Set(diag.diagnoses.flatMap(d => d.node_refs ?? []))} />
       )}
 
-      <div className="flex flex-col xl:flex-row gap-4 items-start">
-        {/* две тепловые карты — Ni и Cu */}
-        <div className="w-full xl:flex-1 min-w-0 space-y-4">
-          {ELEMENTS.map(el => (
-            <Panel key={el}
-              title={<span className="flex items-center gap-2">
-                <Badge tone={el === 'Ni' ? 'brand' : 'warn'}>{el}</Badge>
-                Тепловая карта потерь
-              </span>}
-              subtitle={<>
-                потери <span className="num">{fmt.t(report.losses_tonnes[el])} т</span> ·
-                извлекаемо <span className="num" style={{ color: 'var(--c-ok)' }}>
-                  {fmt.pct(report.recoverable_pct[el])}</span>
-              </>}
-              bodyClass="p-3">
-              <HeatTable el={el} diag={diag} />
-            </Panel>
-          ))}
-        </div>
+      {/* тепловая карта — на всю ширину */}
+      <Panel
+        title={<span className="flex items-center gap-2">
+          <Badge tone={el === 'Ni' ? 'brand' : 'warn'}>{el}</Badge>
+          Тепловая карта потерь
+        </span>}
+        subtitle={<>
+          потери <span className="num">{fmt.t(report.losses_tonnes[el])} т</span> ·
+          извлекаемо <span className="num" style={{ color: 'var(--c-ok)' }}>
+            {fmt.pct(report.recoverable_pct[el])}</span>
+        </>}
+        bodyClass="p-3">
+        <HeatTable el={el} diag={diag} />
+      </Panel>
 
-        {/* панель диагнозов — все элементы вместе */}
-        <aside className="w-full xl:w-96 shrink-0 space-y-3">
-          <SectionLabel>Диагнозы · {diag.diagnoses.length}</SectionLabel>
-          {diag.diagnoses.length === 0 &&
-            <EmptyBox text="Правила диагностики не сработали" icon="target" />}
-          {diag.diagnoses.map(d => {
-            const key = d.rule_id + d.element
-            return (
-              <div key={key} className="card p-3 space-y-2 animate-in">
-                <div className="flex items-center gap-2">
-                  <button type="button" title="показать правило" className="shrink-0"
-                    onClick={() => setOpenRule(openRule === key ? null : key)}>
-                    <Badge tone="solid" className="num cursor-pointer">{d.rule_id}</Badge>
-                  </button>
-                  <Badge tone={d.element === 'Ni' ? 'brand' : 'warn'}>{d.element}</Badge>
-                  <span className="font-semibold text-sm leading-tight">{d.title}</span>
-                  {d.uncertain && <Badge tone="warn">неуверенно</Badge>}
-                </div>
-                <p className="text-sm leading-relaxed">{d.text}</p>
-                {openRule === key && (
-                  <pre className="text-xs num bg-surface-2 border border-line rounded-md p-2 overflow-x-auto"
-                    style={{ color: 'var(--c-muted)' }}>
-                    {JSON.stringify(d.inputs, null, 1)}
-                  </pre>
-                )}
-                <button className="btn btn-primary w-full justify-center"
-                  onClick={() => nav(`/p/${pid}/hypotheses`)}>
-                  <Icon name="spark" />
-                  Сгенерировать гипотезы (извлекаемо <span className="num">{fmt.t(d.tonnes_recoverable, 0)}</span> т)
-                </button>
-              </div>
-            )
-          })}
+      {/* диагнозы — в строку */}
+      <div>
+        <SectionLabel>Диагнозы {el} · {diagnoses.length}</SectionLabel>
+        {diagnoses.length === 0
+          ? <EmptyBox text={`Для ${el} правила диагностики не сработали`} icon="target" />
+          : (
+            <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3 items-start">
+              {diagnoses.map(d => {
+                const key = d.rule_id + d.element
+                return (
+                  <div key={key} className="card p-3 space-y-2 animate-in flex flex-col">
+                    <div className="flex items-center gap-2">
+                      <button type="button" title="показать правило" className="shrink-0"
+                        onClick={() => setOpenRule(openRule === key ? null : key)}>
+                        <Badge tone="solid" className="num cursor-pointer">{d.rule_id}</Badge>
+                      </button>
+                      <span className="font-semibold text-sm leading-tight">{d.title}</span>
+                      {d.uncertain && <Badge tone="warn">неуверенно</Badge>}
+                    </div>
+                    <p className="text-sm leading-relaxed flex-1">{d.text}</p>
+                    {openRule === key && (
+                      <pre className="text-xs num bg-surface-2 border border-line rounded-md p-2 overflow-x-auto"
+                        style={{ color: 'var(--c-muted)' }}>
+                        {JSON.stringify(d.inputs, null, 1)}
+                      </pre>
+                    )}
+                    <button className="btn btn-primary w-full justify-center mt-auto"
+                      onClick={() => nav(`/p/${pid}/hypotheses`)}>
+                      <Icon name="spark" />
+                      Сгенерировать гипотезы (извлекаемо <span className="num">{fmt.t(d.tonnes_recoverable, 0)}</span> т)
+                    </button>
+                  </div>
+                )
+              })}
+            </div>
+          )}
+      </div>
 
-          {diag.issues.filter(i => i.rule?.startsWith('R5')).length > 0 && (
+      {/* аномалии данных и «почему не предложено» — в строку */}
+      {(r5.length > 0 || notProposed.length > 0) && (
+        <div className="grid gap-3 md:grid-cols-2 items-start">
+          {r5.length > 0 && (
             <div className="card p-3">
               <div className="flex items-center gap-1.5 font-semibold text-sm text-warn mb-2">
                 <Icon name="alert" className="w-4 h-4" />
                 Аномалии данных (R5)
               </div>
               <ul className="space-y-1.5">
-                {diag.issues.filter(i => i.rule?.startsWith('R5') && i.severity !== 'info')
-                  .slice(0, 8).map((i, n) => (
-                    <li key={n} className="text-xs bg-warn-tint text-warn rounded-md p-2">
-                      {i.message}
-                    </li>
-                  ))}
-              </ul>
-            </div>
-          )}
-
-          {diag.not_proposed.length > 0 && (
-            <div className="card p-3">
-              <div className="font-semibold text-sm mb-2">Почему не предложено</div>
-              <ul className="space-y-1.5">
-                {diag.not_proposed.map((x, n) => (
-                  <li key={n} className="text-xs" style={{ color: 'var(--c-muted)' }}>
-                    <span className="font-medium text-faint">🔒 {x.form}</span>
-                    <span className="num"> · {x.element} · {fmt.t(x.tonnes, 0)} т</span> — {x.reason}
+                {r5.slice(0, 8).map((i, n) => (
+                  <li key={n} className="text-xs bg-warn-tint text-warn rounded-md p-2">
+                    {i.message}
                   </li>
                 ))}
               </ul>
             </div>
           )}
-        </aside>
-      </div>
+          {notProposed.length > 0 && (
+            <div className="card p-3">
+              <div className="font-semibold text-sm mb-2">Почему не предложено ({el})</div>
+              <ul className="space-y-1.5">
+                {notProposed.map((x, n) => (
+                  <li key={n} className="text-xs" style={{ color: 'var(--c-muted)' }}>
+                    <span className="font-medium text-faint">🔒 {x.form}</span>
+                    <span className="num"> · {fmt.t(x.tonnes, 0)} т</span> — {x.reason}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   )
 }

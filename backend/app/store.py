@@ -50,9 +50,12 @@ CREATE TABLE IF NOT EXISTS line_materials (
   id TEXT PRIMARY KEY, line_id TEXT, material_id TEXT, name TEXT,
   quantity REAL, unit TEXT
 );
+CREATE TABLE IF NOT EXISTS chats (
+  id TEXT PRIMARY KEY, project_id TEXT, title TEXT, created_at TEXT, updated_at TEXT
+);
 CREATE TABLE IF NOT EXISTS chat_messages (
-  id INTEGER PRIMARY KEY AUTOINCREMENT, project_id TEXT, role TEXT,
-  content TEXT, refs_json TEXT, created_at TEXT
+  id INTEGER PRIMARY KEY AUTOINCREMENT, project_id TEXT, chat_id TEXT, role TEXT,
+  content TEXT, refs_json TEXT, charts_json TEXT, created_at TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_chat_project ON chat_messages(project_id);
 """
@@ -130,11 +133,30 @@ class Store:
         self._migrate_project_constraints()
         self._migrate_project_name()
         self._migrate_lines_kind_ownership()
+        self._migrate_chats()
         self._seed_equipment()
         self._seed_lines()
         self._seed_materials()
         self._seed_materials_catalog()
         self._conn.commit()
+
+    def _migrate_chats(self):
+        """Аддитивная миграция: сообщения до появления диалогов (chat_id/charts_json)
+        собираются в один диалог «Диалог» на проект."""
+        for col in ("chat_id TEXT", "charts_json TEXT"):
+            try:
+                self._conn.execute(f"ALTER TABLE chat_messages ADD COLUMN {col}")
+            except sqlite3.OperationalError:
+                pass
+        rows = self._conn.execute(
+            "SELECT DISTINCT project_id FROM chat_messages WHERE chat_id IS NULL").fetchall()
+        for r in rows:
+            cid = uuid.uuid4().hex[:10]
+            self._conn.execute("INSERT INTO chats VALUES (?,?,?,?,?)",
+                               (cid, r["project_id"], "Диалог", _now(), _now()))
+            self._conn.execute(
+                "UPDATE chat_messages SET chat_id=? WHERE project_id=? AND chat_id IS NULL",
+                (cid, r["project_id"]))
 
     def _migrate_project_constraints(self):
         """Аддитивная миграция: старые БД созданы до появления раздела «Ограничения»."""
@@ -280,7 +302,8 @@ class Store:
         Возвращает False, если проекта не было."""
         with self._lock:
             cur = self._conn.execute("DELETE FROM projects WHERE id=?", (pid,))
-            for table in ("reports", "hypotheses", "feedback", "roadmaps", "chat_messages"):
+            for table in ("reports", "hypotheses", "feedback", "roadmaps",
+                          "chat_messages", "chats"):
                 self._conn.execute(f"DELETE FROM {table} WHERE project_id=?", (pid,))
             self._conn.commit()
             return cur.rowcount > 0
@@ -530,32 +553,88 @@ class Store:
                 "SELECT * FROM feedback WHERE project_id=? ORDER BY id", (project_id,)).fetchall()
             return [dict(r) for r in rows]
 
-    # ---------- чат-ассистент ----------
-    def add_chat_message(self, project_id: str, role: str, content: str,
-                         refs: list[dict] | None = None):
+    # ---------- чат-ассистент (диалоги) ----------
+    def create_chat(self, project_id: str, title: str = "Новый диалог") -> dict:
+        chat = {"id": uuid.uuid4().hex[:10], "project_id": project_id,
+                "title": title, "created_at": _now(), "updated_at": _now()}
         with self._lock:
-            self._conn.execute(
-                "INSERT INTO chat_messages (project_id, role, content, refs_json, created_at) "
-                "VALUES (?,?,?,?,?)",
-                (project_id, role, content,
-                 json.dumps(refs or [], ensure_ascii=False), _now()))
+            self._conn.execute("INSERT INTO chats VALUES (?,?,?,?,?)",
+                               (chat["id"], project_id, title,
+                                chat["created_at"], chat["updated_at"]))
             self._conn.commit()
+        return {**chat, "messages": 0}
 
-    def get_chat_messages(self, project_id: str, limit: int = 100) -> list[dict]:
-        """Последние `limit` сообщений в хронологическом порядке."""
+    def get_chat(self, chat_id: str) -> dict | None:
+        with self._lock:
+            row = self._conn.execute("SELECT * FROM chats WHERE id=?", (chat_id,)).fetchone()
+            return dict(row) if row else None
+
+    def list_chats(self, project_id: str) -> list[dict]:
+        """Диалоги проекта, свежие сверху, с числом сообщений."""
         with self._lock:
             rows = self._conn.execute(
-                "SELECT role, content, refs_json, created_at FROM chat_messages "
-                "WHERE project_id=? ORDER BY id DESC LIMIT ?",
-                (project_id, limit)).fetchall()
+                "SELECT c.*, (SELECT COUNT(*) FROM chat_messages m WHERE m.chat_id=c.id) "
+                "AS messages FROM chats c WHERE c.project_id=? "
+                "ORDER BY c.updated_at DESC, c.rowid DESC", (project_id,)).fetchall()
+            return [dict(r) for r in rows]
+
+    def latest_chat(self, project_id: str) -> dict | None:
+        chats = self.list_chats(project_id)
+        return chats[0] if chats else None
+
+    def rename_chat(self, chat_id: str, title: str):
+        with self._lock:
+            self._conn.execute("UPDATE chats SET title=?, updated_at=? WHERE id=?",
+                               (title, _now(), chat_id))
+            self._conn.commit()
+
+    def delete_chat(self, chat_id: str) -> bool:
+        with self._lock:
+            cur = self._conn.execute("DELETE FROM chats WHERE id=?", (chat_id,))
+            self._conn.execute("DELETE FROM chat_messages WHERE chat_id=?", (chat_id,))
+            self._conn.commit()
+            return cur.rowcount > 0
+
+    def add_chat_message(self, project_id: str, role: str, content: str,
+                         refs: list[dict] | None = None,
+                         charts: list[dict] | None = None,
+                         chat_id: str | None = None):
+        with self._lock:
+            self._conn.execute(
+                "INSERT INTO chat_messages (project_id, chat_id, role, content, "
+                "refs_json, charts_json, created_at) VALUES (?,?,?,?,?,?,?)",
+                (project_id, chat_id, role, content,
+                 json.dumps(refs or [], ensure_ascii=False),
+                 json.dumps(charts or [], ensure_ascii=False), _now()))
+            if chat_id:
+                self._conn.execute("UPDATE chats SET updated_at=? WHERE id=?",
+                                   (_now(), chat_id))
+            self._conn.commit()
+
+    def get_chat_messages(self, project_id: str, limit: int = 100,
+                          chat_id: str | None = None) -> list[dict]:
+        """Последние `limit` сообщений в хронологическом порядке
+        (всего проекта или одного диалога)."""
+        where, params = "project_id=?", [project_id]
+        if chat_id:
+            where += " AND chat_id=?"
+            params.append(chat_id)
+        with self._lock:
+            rows = self._conn.execute(
+                f"SELECT role, content, refs_json, charts_json, created_at "
+                f"FROM chat_messages WHERE {where} ORDER BY id DESC LIMIT ?",
+                (*params, limit)).fetchall()
         return [{"role": r["role"], "content": r["content"],
                  "references": json.loads(r["refs_json"] or "[]"),
+                 "charts": json.loads(r["charts_json"] or "[]"),
                  "created_at": r["created_at"]} for r in reversed(rows)]
 
     def clear_chat(self, project_id: str) -> int:
+        """Удаляет все диалоги проекта; возвращает число удалённых сообщений."""
         with self._lock:
             cur = self._conn.execute("DELETE FROM chat_messages WHERE project_id=?",
                                      (project_id,))
+            self._conn.execute("DELETE FROM chats WHERE project_id=?", (project_id,))
             self._conn.commit()
             return cur.rowcount
 

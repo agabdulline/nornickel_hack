@@ -222,9 +222,24 @@ class ChatReference(BaseModel):
     id: str
 
 
+class ChartPoint(BaseModel):
+    label: str
+    value: float
+
+
+class ChatChart(BaseModel):
+    """График в ответе ассистента. Данные — только числа из контекста,
+    ответ модели валидируется в chat._parse_charts."""
+    type: Literal["bar"] = "bar"
+    title: str
+    unit: str = ""
+    data: list[ChartPoint] = Field(default_factory=list)
+
+
 class ChatAnswer(BaseModel):
     text: str
     references: list[ChatReference] = Field(default_factory=list)
+    charts: list[ChatChart] = Field(default_factory=list)
 
 
 class ProjectConstraints(BaseModel):

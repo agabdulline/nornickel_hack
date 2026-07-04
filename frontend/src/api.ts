@@ -1,13 +1,14 @@
 import type {
-  ChatAnswer, ChatReference, DiagnosticsResult, Equipment, FlowsheetData, Hypothesis,
-  KbDoc, Line, LineMaterial, Material, Project, ProjectConstraints, RoadmapItem,
-  TailingsReport,
+  ChatAnswer, ChatChart, ChatMeta, ChatReference, DiagnosticsResult, Equipment,
+  FlowsheetData, Hypothesis, KbDoc, Line, LineMaterial, Material, Project,
+  ProjectConstraints, RoadmapItem, TailingsReport,
 } from './types'
 
 export interface ChatHistoryMsg {
   role: 'user' | 'assistant'
   content: string
   references: ChatReference[]
+  charts?: ChatChart[]
   created_at?: string
 }
 
@@ -138,16 +139,25 @@ export const api = {
       body: JSON.stringify({ action, reason }),
     })),
 
-  // историю хранит сервер — клиент шлёт только вопрос
-  chat: (pid: string, message: string) =>
-    j<ChatAnswer>(fetch(`/api/projects/${pid}/chat`, {
+  // историю хранит сервер (по диалогам) — клиент шлёт вопрос и chat_id
+  chat: (pid: string, message: string, chatId?: string) =>
+    j<ChatAnswer & { chat_id: string }>(fetch(`/api/projects/${pid}/chat`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ message }),
+      body: JSON.stringify({ message, chat_id: chatId }),
     })),
-  chatHistory: (pid: string) =>
-    j<{ messages: ChatHistoryMsg[] }>(fetch(`/api/projects/${pid}/chat/history`)),
+  chats: (pid: string) => j<ChatMeta[]>(fetch(`/api/projects/${pid}/chats`)),
+  chatCreate: (pid: string) =>
+    j<ChatMeta>(fetch(`/api/projects/${pid}/chats`, { method: 'POST' })),
+  chatDelete: (pid: string, chatId: string) =>
+    j<{ ok: boolean }>(fetch(`/api/projects/${pid}/chats/${encodeURIComponent(chatId)}`, {
+      method: 'DELETE',
+    })),
   chatClear: (pid: string) =>
     j<{ cleared: number }>(fetch(`/api/projects/${pid}/chat/history`, { method: 'DELETE' })),
+  chatHistory: (pid: string, chatId?: string) =>
+    j<{ chat_id: string | null; messages: ChatHistoryMsg[] }>(
+      fetch(`/api/projects/${pid}/chat/history` +
+        (chatId ? `?chat_id=${encodeURIComponent(chatId)}` : ''))),
 
   roadmapBuild: (pid: string) =>
     j<RoadmapItem[]>(fetch(`/api/projects/${pid}/roadmap/build`, { method: 'POST' })),

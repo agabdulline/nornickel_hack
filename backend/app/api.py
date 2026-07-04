@@ -478,6 +478,42 @@ class ChatIn(BaseModel):
     message: str
     history: list[dict] = Field(default_factory=list)   # опционально: оверрайд истории
     tail_type: str | None = None
+    chat_id: str | None = None    # без него — последний диалог проекта (или новый)
+
+
+class ChatCreateIn(BaseModel):
+    title: str = "Новый диалог"
+
+
+_DEFAULT_CHAT_TITLES = ("Новый диалог", "Диалог", "")
+
+
+def _chat_or_404(pid: str, chat_id: str, store: Store) -> dict:
+    chat = store.get_chat(chat_id)
+    if not chat or chat["project_id"] != pid:
+        raise HTTPException(404, "диалог не найден")
+    return chat
+
+
+@router.get("/projects/{pid}/chats")
+def list_chats(pid: str, store: Store = Depends(get_store)) -> list[dict]:
+    _project_or_404(pid, store)
+    return store.list_chats(pid)
+
+
+@router.post("/projects/{pid}/chats")
+def create_chat(pid: str, body: ChatCreateIn | None = None,
+                store: Store = Depends(get_store)) -> dict:
+    _project_or_404(pid, store)
+    return store.create_chat(pid, (body.title if body else "Новый диалог") or "Новый диалог")
+
+
+@router.delete("/projects/{pid}/chats/{chat_id}")
+def delete_chat(pid: str, chat_id: str, store: Store = Depends(get_store)) -> dict:
+    _project_or_404(pid, store)
+    _chat_or_404(pid, chat_id, store)
+    store.delete_chat(chat_id)
+    return {"ok": True}
 
 
 @router.post("/projects/{pid}/chat")
@@ -490,30 +526,45 @@ def project_chat(pid: str, body: ChatIn, store: Store = Depends(get_store),
         raise HTTPException(404, "сначала загрузите отчёт")
     reports, meta = got
     report = _pick_report(reports, body.tail_type)
+    chat = (_chat_or_404(pid, body.chat_id, store) if body.chat_id
+            else store.latest_chat(pid) or store.create_chat(pid))
     # диагнозы с привязкой к схеме фабрики — как на экране диагностики
     _factory, flowsheet = _project_flowsheet(pid, store)
     diag = run_diagnostics(report, flowsheet=flowsheet, meta=meta.get("parse_meta"))
     hyps = store.get_hypotheses(pid)
-    # история хранится на сервере; клиентская (если прислали) имеет приоритет
+    # история диалога хранится на сервере; клиентская (если прислали) важнее
     history = body.history or [{"role": m["role"], "content": m["content"]}
-                               for m in store.get_chat_messages(pid, limit=12)]
+                               for m in store.get_chat_messages(pid, limit=12,
+                                                                chat_id=chat["id"])]
     ans = chat_mod.answer(body.message, history, report, diag, hyps,
                           project, kb_index=kb, llm=llm_client,
                           roadmap=store.get_roadmap(pid))
-    store.add_chat_message(pid, "user", body.message)
+    store.add_chat_message(pid, "user", body.message, chat_id=chat["id"])
     store.add_chat_message(pid, "assistant", ans.text,
-                           refs=[r.model_dump() for r in ans.references])
-    return ans.model_dump()
+                           refs=[r.model_dump() for r in ans.references],
+                           charts=[c.model_dump() for c in ans.charts],
+                           chat_id=chat["id"])
+    if chat["title"] in _DEFAULT_CHAT_TITLES:   # заголовок из первого вопроса
+        store.rename_chat(chat["id"], body.message.strip()[:48] or "Диалог")
+    return {**ans.model_dump(), "chat_id": chat["id"]}
 
 
 @router.get("/projects/{pid}/chat/history")
-def chat_history(pid: str, store: Store = Depends(get_store)) -> dict:
+def chat_history(pid: str, chat_id: str | None = None,
+                 store: Store = Depends(get_store)) -> dict:
+    """История диалога (по chat_id; без него — последнего диалога проекта)."""
     _project_or_404(pid, store)
-    return {"messages": store.get_chat_messages(pid)}
+    chat = (_chat_or_404(pid, chat_id, store) if chat_id
+            else store.latest_chat(pid))
+    if not chat:
+        return {"chat_id": None, "messages": []}
+    return {"chat_id": chat["id"],
+            "messages": store.get_chat_messages(pid, chat_id=chat["id"])}
 
 
 @router.delete("/projects/{pid}/chat/history")
 def chat_clear(pid: str, store: Store = Depends(get_store)) -> dict:
+    """Полная очистка: все диалоги проекта."""
     _project_or_404(pid, store)
     return {"cleared": store.clear_chat(pid)}
 

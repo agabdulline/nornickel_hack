@@ -132,7 +132,17 @@ export interface RoadmapItem {
 }
 
 export interface ChatReference { type: 'rule' | 'cell' | 'hypothesis' | 'chunk'; id: string }
-export interface ChatAnswer { text: string; references: ChatReference[] }
+export interface ChatChart {
+  type: 'bar'
+  title: string
+  unit?: string
+  data: { label: string; value: number }[]
+}
+export interface ChatAnswer { text: string; references: ChatReference[]; charts?: ChatChart[] }
+export interface ChatMeta {
+  id: string; project_id: string; title: string
+  created_at: string; updated_at: string; messages: number
+}
 
 export interface KbDoc {
   doc_id: string; source: string; pages: number; chunks: number; status: string;

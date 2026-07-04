@@ -15,7 +15,8 @@ import re
 from .diagnostics import DiagnosticsResult
 from .kb.index import KBIndex, default_index
 from .llm import LLMClient, LLMUnavailable, client as default_client, extract_json
-from .models import ChatAnswer, ChatReference, Hypothesis, Project, TailingsReport
+from .models import (ChartPoint, ChatAnswer, ChatChart, ChatReference, Hypothesis,
+                     Project, TailingsReport)
 
 log = logging.getLogger("chat")
 
@@ -35,9 +36,16 @@ SYSTEM_CHAT = """Ты — ассистент-интерпретатор сист
   (какой экран, какое правило, какая ячейка).
 - Пиши компактно: короткие абзацы, без воды; списки — через «- » с новой строки.
 - Ссылки вставляй в текст ровно в том формате id, что дан в контексте.
+- Если просят график/сравнить/показать распределение чисел — добавь 1–2 графика
+  СТРОГО из чисел контекста (не выдумывай и не пересчитывай): 3–10 строк,
+  одна величина на график, Ni и Cu — отдельными графиками. Если графика не
+  просили, но сравнение по 3+ числам просится само — тоже можно один.
 
 Ответ строго JSON: {"text": "ответ со ссылками в тексте",
-"references": [{"type": "rule|cell|hypothesis|chunk", "id": "..."}]}"""
+"references": [{"type": "rule|cell|hypothesis|chunk", "id": "..."}],
+"charts": [{"type": "bar", "title": "Потери Ni по классам", "unit": "т",
+"data": [{"label": "+125", "value": 1471.3}]}]}
+Поле charts опционально — пустой список, если график не нужен."""
 
 
 def build_context(question: str, report: TailingsReport, diag: DiagnosticsResult,
@@ -155,6 +163,7 @@ def answer(question: str, history: list[dict], report: TailingsReport,
         refs = [ChatReference(type=r.get("type", "rule"), id=str(r.get("id", "")))
                 for r in data.get("references", [])
                 if r.get("type") in ("rule", "cell", "hypothesis", "chunk")]
+        charts = _parse_charts(data.get("charts"))
     except (LLMUnavailable, ValueError) as e:
         log.warning("чат: LLM недоступна (%s) — детерминированный ответ", e)
         return _offline_answer(ctx, diag, hypotheses, question)
@@ -163,7 +172,31 @@ def answer(question: str, history: list[dict], report: TailingsReport,
         refs = _scan_references(text, report, diag, hypotheses,
                                 kb_chunk_ids={c["chunk_id"]
                                               for c in ctx["фрагменты_литературы"]})
-    return ChatAnswer(text=text, references=refs)
+    return ChatAnswer(text=text, references=refs, charts=charts)
+
+
+def _parse_charts(raw) -> list[ChatChart]:
+    """Валидация графиков из ответа модели: максимум 2, по 3–12 числовых точек;
+    всё кривое молча отбрасывается — график опционален."""
+    charts: list[ChatChart] = []
+    for ch in (raw or [])[:2]:
+        if not isinstance(ch, dict) or not str(ch.get("title", "")).strip():
+            continue
+        points = []
+        for p in (ch.get("data") or [])[:12]:
+            try:
+                points.append(ChartPoint(label=str(p["label"])[:40],
+                                         value=float(p["value"])))
+            except (KeyError, TypeError, ValueError):
+                continue
+        if len(points) >= 3:
+            title = str(ch["title"])[:80].strip()
+            unit = str(ch.get("unit", ""))[:12].strip()
+            if unit:  # модель любит дублировать единицу в заголовке
+                title = re.sub(rf",?\s*(\(\s*{re.escape(unit)}\s*\)|{re.escape(unit)})$",
+                               "", title).strip()
+            charts.append(ChatChart(title=title, unit=unit, data=points))
+    return charts
 
 
 def _scan_references(text: str, report: TailingsReport, diag: DiagnosticsResult,
@@ -198,6 +231,18 @@ def _offline_answer(ctx: dict, diag: DiagnosticsResult,
     Простые намерения (неизвлекаемое, гипотезы) закрываем без модели."""
     q_low = question.lower()
     prefix = "LLM недоступна, отвечаю по данным пайплайна. "
+
+    if re.search(r"график|диаграмм|распределен", q_low) and ctx["отчёт"].get("классы"):
+        charts = []
+        for el in ("Ni", "Cu"):
+            pts = [ChartPoint(label=k["класс"], value=k.get(f"{el}_т") or 0.0)
+                   for k in ctx["отчёт"]["классы"] if k.get(f"{el}_т") is not None]
+            if len(pts) >= 3:
+                charts.append(ChatChart(title=f"Потери {el} по классам крупности",
+                                        unit="т", data=pts))
+        if charts:
+            return ChatAnswer(text=prefix + "Распределение потерь по классам крупности "
+                              "из отчёта — на графиках ниже.", charts=charts)
 
     if "неизвлека" in q_low and ctx.get("почему_не_предложено"):
         lines = [f"- {n.get('form', '?')} ({n.get('element', '')}): "

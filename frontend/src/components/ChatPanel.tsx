@@ -1,13 +1,14 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { api } from '../api'
-import type { ChatReference } from '../types'
+import { api, fmt } from '../api'
+import type { ChatChart, ChatMeta, ChatReference } from '../types'
 import { ChunkModal, Icon, Chip, SectionLabel } from './common'
 
 interface Msg {
   role: 'user' | 'assistant'
   content: string
   refs?: ChatReference[]
+  charts?: ChatChart[]
   error?: boolean      // сообщение-ошибка с кнопкой «Повторить»
   retryText?: string   // какой вопрос пересылать при ретрае
 }
@@ -16,7 +17,7 @@ const SUGGESTIONS = [
   'Объясни главный диагноз',
   'Почему гипотеза №1 первая?',
   'Что неизвлекаемо и почему?',
-  'Когда стартуют испытания принятых гипотез?',
+  'Покажи график потерь по классам крупности',
 ]
 
 // Подсказки для режима «без проекта» — общий вопрос к базе знаний.
@@ -76,12 +77,43 @@ function RichText({ text, refs, onRef }: {
   )
 }
 
-/** Чат-ассистент. С `pid` — интерпретатор проекта (отчёт/диагнозы/гипотезы),
- *  история хранится на сервере и переживает закрытие панели и перезагрузку;
- *  без `pid` (напр. на главной) — вопрос к базе знаний, история в localStorage. */
+/** Горизонтальный бар-чарт: одна величина, тонкие бары со скруглённым концом
+ *  данных, подписи и значения — текстовыми токенами (не цветом серии). */
+function ChartBlock({ chart }: { chart: ChatChart }) {
+  const data = chart.data.slice(0, 12)
+  const max = Math.max(...data.map(d => Math.abs(d.value)), 1e-9)
+  return (
+    <div className="mt-2 rounded-lg border border-line bg-surface px-3 py-2.5 w-full">
+      <div className="text-[12px] font-semibold mb-2">
+        {chart.title}{chart.unit ? `, ${chart.unit}` : ''}
+      </div>
+      <div className="flex flex-col gap-1.5">
+        {data.map((d, i) => (
+          <div key={i} className="grid items-center gap-2"
+            style={{ gridTemplateColumns: '5.5rem 1fr auto' }}
+            title={`${d.label}: ${fmt.t(d.value)}${chart.unit ? ' ' + chart.unit : ''}`}>
+            <div className="text-[11px] truncate" style={{ color: 'var(--c-muted)' }}>
+              {d.label}
+            </div>
+            <div className="h-2 rounded-r-[4px] min-w-[2px]"
+              style={{ width: `${Math.max(2, Math.abs(d.value) / max * 100)}%`,
+                       background: 'var(--c-brand)' }} />
+            <div className="num text-[11px]">{fmt.t(d.value)}</div>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+/** Чат-ассистент. С `pid` — интерпретатор проекта: несколько диалогов,
+ *  история на сервере (переживает закрытие панели и перезагрузку);
+ *  без `pid` (на главной) — вопрос к базе знаний, история в localStorage. */
 export default function ChatPanel({ pid, onClose }: { pid?: string; onClose: () => void }) {
   const nav = useNavigate()
   const kbMode = !pid
+  const [chats, setChats] = useState<ChatMeta[]>([])
+  const [active, setActive] = useState<string | null>(null)
   const [msgs, setMsgs] = useState<Msg[]>(() => (kbMode ? loadKbMsgs() : []))
   const [histLoading, setHistLoading] = useState(!kbMode)
   const [input, setInput] = useState('')
@@ -89,23 +121,39 @@ export default function ChatPanel({ pid, onClose }: { pid?: string; onClose: () 
   const [chunk, setChunk] = useState<string | null>(null)
   const bottomRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
+  const reqSeq = useRef(0)   // защита от гонок при переключении диалогов
 
-  // история проекта — с сервера
+  const mapHistory = (ms: { role: 'user' | 'assistant'; content: string
+    references: ChatReference[]; charts?: ChatChart[] }[]): Msg[] =>
+    ms.map(m => ({ role: m.role, content: m.content, refs: m.references, charts: m.charts }))
+
+  const loadHistory = useCallback(async (cid: string | null) => {
+    if (!pid) return
+    const seq = ++reqSeq.current
+    if (!cid) { setMsgs([]); setHistLoading(false); return }
+    setHistLoading(true)
+    try {
+      const h = await api.chatHistory(pid, cid)
+      if (seq === reqSeq.current) setMsgs(mapHistory(h.messages))
+    } catch { /* истории нет — чистый лист */ }
+    finally { if (seq === reqSeq.current) setHistLoading(false) }
+  }, [pid])
+
+  // диалоги проекта — с сервера; открываем самый свежий
   useEffect(() => {
     if (!pid) return
     let live = true
-    setHistLoading(true)
-    api.chatHistory(pid)
-      .then(h => {
+    api.chats(pid)
+      .then(cs => {
         if (!live) return
-        // не затираем сообщение, отправленное пока история грузилась
-        setMsgs(cur => cur.length ? cur
-          : h.messages.map(m => ({ role: m.role, content: m.content, refs: m.references })))
+        setChats(cs)
+        const first = cs[0]?.id ?? null
+        setActive(first)
+        loadHistory(first)
       })
-      .catch(() => { /* истории нет — начинаем с чистого листа */ })
-      .finally(() => { if (live) setHistLoading(false) })
+      .catch(() => { if (live) setHistLoading(false) })
     return () => { live = false }
-  }, [pid])
+  }, [pid, loadHistory])
 
   // история режима БЗ — в localStorage
   useEffect(() => {
@@ -114,6 +162,11 @@ export default function ChatPanel({ pid, onClose }: { pid?: string; onClose: () 
   }, [kbMode, msgs])
 
   useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [msgs, busy])
+
+  const refreshChats = async () => {
+    if (!pid) return
+    try { setChats(await api.chats(pid)) } catch { /* не критично */ }
+  }
 
   const send = async (text: string, retry = false) => {
     if (!text.trim() || busy) return
@@ -125,8 +178,15 @@ export default function ChatPanel({ pid, onClose }: { pid?: string; onClose: () 
     setBusy(true)
     try {
       if (pid) {
-        const ans = await api.chat(pid, text)
-        setMsgs(m => [...m, { role: 'assistant', content: ans.text, refs: ans.references }])
+        let cid = active
+        if (!cid) {
+          cid = (await api.chatCreate(pid)).id
+          setActive(cid)
+        }
+        const ans = await api.chat(pid, text, cid)
+        setMsgs(m => [...m, { role: 'assistant', content: ans.text,
+                              refs: ans.references, charts: ans.charts }])
+        refreshChats()   // подхватить авто-заголовок диалога
       } else {
         const ans = await api.kbAsk(text)
         const refs: ChatReference[] = ans.citations.map(c => ({ type: 'chunk', id: c.chunk_id }))
@@ -143,13 +203,34 @@ export default function ChatPanel({ pid, onClose }: { pid?: string; onClose: () 
     }
   }
 
-  const clear = async () => {
+  const newChat = () => {
+    if (busy) return
+    setActive(null)
+    setMsgs([])
+    setHistLoading(false)
+    inputRef.current?.focus()
+  }
+
+  const switchChat = (cid: string) => {
+    if (busy || cid === active) return
+    setActive(cid)
+    loadHistory(cid)
+  }
+
+  const deleteActiveChat = async () => {
+    if (!pid || !active || busy) return
+    if (!window.confirm('Удалить этот диалог?')) return
+    try { await api.chatDelete(pid, active) } catch { /* мог быть уже удалён */ }
+    const rest = chats.filter(c => c.id !== active)
+    setChats(rest)
+    const next = rest[0]?.id ?? null
+    setActive(next)
+    loadHistory(next)
+  }
+
+  const clearKb = () => {
     if (!window.confirm('Очистить историю диалога?')) return
-    if (pid) {
-      try { await api.chatClear(pid) } catch { /* не критично */ }
-    } else {
-      try { localStorage.removeItem(KB_STORE_KEY) } catch { /* пусто */ }
-    }
+    try { localStorage.removeItem(KB_STORE_KEY) } catch { /* пусто */ }
     setMsgs([])
     inputRef.current?.focus()
   }
@@ -185,8 +266,8 @@ export default function ChatPanel({ pid, onClose }: { pid?: string; onClose: () 
           </div>
         </div>
         <div className="flex items-center gap-1 ml-auto shrink-0">
-          {msgs.length > 0 && (
-            <button className="btn btn-ghost !px-2" onClick={clear}
+          {kbMode && msgs.length > 0 && (
+            <button className="btn btn-ghost !px-2" onClick={clearKb}
               title="Очистить историю" aria-label="Очистить историю">
               <Icon name="trash" className="w-4 h-4" />
             </button>
@@ -196,6 +277,29 @@ export default function ChatPanel({ pid, onClose }: { pid?: string; onClose: () 
           </button>
         </div>
       </header>
+
+      {/* Диалоги проекта: переключить / новый / удалить */}
+      {!kbMode && (chats.length > 0 || active === null) && (
+        <div className="flex items-center gap-1.5 px-4 py-2 border-b border-line shrink-0">
+          <select className="input !h-8 !py-0 flex-1 min-w-0 text-[13px]"
+            value={active ?? ''} disabled={busy}
+            onChange={e => e.target.value ? switchChat(e.target.value) : newChat()}
+            aria-label="Диалог">
+            {active === null && <option value="">Новый диалог</option>}
+            {chats.map(c => <option key={c.id} value={c.id}>{c.title}</option>)}
+          </select>
+          <button className="btn btn-ghost !px-2 shrink-0" onClick={newChat} disabled={busy}
+            title="Новый диалог" aria-label="Новый диалог">
+            <Icon name="plus" className="w-4 h-4" />
+          </button>
+          {active && (
+            <button className="btn btn-ghost !px-2 shrink-0" onClick={deleteActiveChat}
+              disabled={busy} title="Удалить диалог" aria-label="Удалить диалог">
+              <Icon name="trash" className="w-4 h-4" />
+            </button>
+          )}
+        </div>
+      )}
 
       {/* Лента сообщений */}
       <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
@@ -211,7 +315,7 @@ export default function ChatPanel({ pid, onClose }: { pid?: string; onClose: () 
             <div className="text-sm leading-relaxed" style={{ color: 'var(--c-muted)' }}>
               {kbMode
                 ? 'Отвечаю на вопросы по базе знаний — с цитатами из литературы и номерами страниц.'
-                : 'Отвечаю на вопросы про этот отчёт, диагнозы и гипотезы — со ссылками на правила, ячейки и литературу.'}
+                : 'Отвечаю на вопросы про этот отчёт, диагнозы и гипотезы — со ссылками на правила, ячейки и литературу. Могу построить график по числам отчёта.'}
             </div>
             <div className="mt-5">
               <SectionLabel>С чего начать</SectionLabel>
@@ -238,6 +342,7 @@ export default function ChatPanel({ pid, onClose }: { pid?: string; onClose: () 
                 {isUser
                   ? m.content
                   : <RichText text={m.content} refs={m.refs ?? []} onRef={openRef} />}
+                {!isUser && (m.charts ?? []).map((c, n) => <ChartBlock key={n} chart={c} />)}
               </div>
               {m.error && m.retryText && (
                 <div className="mt-1.5">

@@ -105,9 +105,11 @@ _SEED_EQUIPMENT: dict[str, list[dict]] = {
 }
 
 # сид линий/лабораторий: id совпадает с прежним свободным именем линии —
-# так первая итерация (equipment.line_id == "НОФ · вкрапленные руды") не ломается
+# так первая итерация (equipment.line_id == "НОФ · вкрапленные руды") не ломается.
+# Отображаемое имя — голое «НОФ» (одна фабрика — одна схема; ore-тип живёт в
+# данных проекта, а не в имени объекта); id при этом не трогаем.
 _SEED_LINES: list[dict] = [
-    {"id": "НОФ · вкрапленные руды", "name": "НОФ · вкрапленные руды",
+    {"id": "НОФ · вкрапленные руды", "name": "НОФ",
      "kind": "производственная линия", "ownership": "в штате компании"},
     {"id": _INSTITUTE, "name": _INSTITUTE,
      "kind": "лаборатория", "ownership": "в штате компании"},
@@ -157,6 +159,7 @@ class Store:
         self._seed_equipment()
         self._seed_lines()
         self._migrate_project_lines()
+        self._migrate_line_names()
         self._seed_materials()
         self._seed_materials_catalog()
         self._seed_factory_images()
@@ -215,6 +218,19 @@ class Store:
             "UPDATE lines SET kind = CASE type WHEN 'factory' THEN 'производственная линия' "
             "WHEN 'lab' THEN 'лаборатория' ELSE 'производственная линия' END WHERE kind IS NULL")
         self._conn.execute("UPDATE lines SET ownership = 'в штате компании' WHERE ownership IS NULL")
+
+    def _migrate_line_names(self):
+        """Отображаемые имена линий -> корректные (напр. сид-линия НОФ:
+        'НОФ · вкрапленные руды' -> 'НОФ'). Нужна для уже существующих БД
+        (деплой персистентный, _seed_lines их не переименовывает). id не
+        трогаем — только name. Идемпотентно: WHERE name=старое, второй раз
+        no-op; чужие переименования линий не затрагиваем."""
+        for line_id, new_name, old_name in [
+            ("НОФ · вкрапленные руды", "НОФ", "НОФ · вкрапленные руды"),
+        ]:
+            self._conn.execute(
+                "UPDATE lines SET name=? WHERE id=? AND name=?",
+                (new_name, line_id, old_name))
 
     def _migrate_project_lines(self):
         """Реконсиляция привязки проект→линия (line-scoped данные).

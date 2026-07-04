@@ -126,15 +126,17 @@ export function LineCombobox({ value, onSelect, placeholder }: {
         <div className="absolute z-20 mt-1 w-full bg-surface border border-line rounded-lg
             shadow-pop max-h-72 overflow-auto text-sm">
           {filtered.map(l => (
-            <button key={l.id} type="button"
-              className="w-full text-left px-3 py-2 hover:bg-brand-tint flex items-center justify-between gap-2 transition-colors"
+            <button key={l.id} type="button" title={l.name}
+              className="w-full text-left px-3 py-2 hover:bg-brand-tint transition-colors"
               onClick={() => pick(l)}>
-              <span className={l.id === NO_OBJECT_ID ? 'text-faint italic' : ''}>{l.name}</span>
+              <div className={'leading-snug line-clamp-2 ' + (l.id === NO_OBJECT_ID ? 'text-faint italic' : '')}>
+                {l.name}
+              </div>
               {l.id !== NO_OBJECT_ID && (
-                <span className="flex items-center gap-1">
-                  <OwnershipBadge ownership={l.ownership} />
+                <div className="flex flex-wrap items-center gap-1 mt-1">
                   <KindBadge kind={l.kind} />
-                </span>
+                  <OwnershipBadge ownership={l.ownership} />
+                </div>
               )}
             </button>
           ))}

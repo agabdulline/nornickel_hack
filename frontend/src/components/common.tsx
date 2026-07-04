@@ -280,6 +280,26 @@ export function Modal({ title, onClose, children, wide = false }: {
   )
 }
 
+/** Склейка «сырых» переводов строк из PDF-экстракции для читаемого отображения:
+ * одиночный \n посреди предложения -> пробел; границы предложений, списки и
+ * заголовки сохраняются. Только для показа — индекс и цитаты не трогаем. */
+export function reflowPdfText(text: string): string {
+  return text.split(/\n{2,}/).map(par => {
+    let acc = ''
+    for (const raw of par.split('\n')) {
+      const line = raw.trim()
+      if (!line) continue
+      if (!acc) { acc = line; continue }
+      const sentenceEnd = /[.!?:…]["»)\]]?$/.test(acc)
+      const startsList = /^([-•–—]\s|\d+[.)]\s|[а-яa-z]\)\s)/i.test(line)
+      const startsLower = /^[а-яёa-z]/.test(line)
+      if ((sentenceEnd && !startsLower) || startsList) acc += '\n' + line
+      else acc += ' ' + line
+    }
+    return acc
+  }).filter(Boolean).join('\n\n')
+}
+
 /** Модалка источника цитаты: «Текст» — фрагмент с подсветкой цитаты,
  * «Исходник» — оригинальный PDF, открытый на странице цитаты. */
 export function ChunkModal({ chunkId, quote, onClose }:
@@ -331,7 +351,7 @@ export function ChunkModal({ chunkId, quote, onClose }:
           style={{ height: '68vh', border: '1px solid var(--c-line)' }} />
       ) : (
         <div className="text-sm whitespace-pre-wrap leading-relaxed" style={{ color: 'var(--c-text)' }}>
-          {chunk ? hl(chunk.text) : 'Загрузка…'}
+          {chunk ? hl(reflowPdfText(chunk.text)) : 'Загрузка…'}
         </div>
       )}
     </Modal>

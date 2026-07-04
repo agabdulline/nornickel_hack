@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { api } from '../api'
 import type { Equipment, KbDoc, Line, LineKind, LineMaterial, Material, LineOwnership } from '../types'
-import { Badge, ChunkModal, ErrorBox, Icon, Modal, Panel, SectionLabel, Segmented } from '../components/common'
+import { Badge, ChunkModal, ErrorBox, Icon, Modal, Panel, SectionLabel, Segmented, reflowPdfText } from '../components/common'
 import {
   commitLineEdits, type DraftEquipment, type DraftMaterial, EquipmentRows, MaterialRows,
   toDraftEquipment, toDraftMaterial,
@@ -267,7 +267,7 @@ function DocPreviewModal({ doc, onClose }: { doc: KbDoc; onClose: () => void }) 
                 с. {c.page_start}{c.page_end !== c.page_start ? `–${c.page_end}` : ''}
               </div>
               <div className="text-sm whitespace-pre-wrap leading-relaxed" style={{ color: 'var(--c-text)' }}>
-                {c.text}
+                {reflowPdfText(c.text)}
               </div>
             </div>
           ))}

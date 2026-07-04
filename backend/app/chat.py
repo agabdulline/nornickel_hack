@@ -15,8 +15,8 @@ import re
 from .diagnostics import DiagnosticsResult
 from .kb.index import KBIndex, default_index
 from .llm import LLMClient, LLMUnavailable, client as default_client, extract_json
-from .models import (ChartPoint, ChatAnswer, ChatChart, ChatReference, Hypothesis,
-                     Project, TailingsReport)
+from .models import (ChartPoint, ChatAction, ChatAnswer, ChatChart, ChatReference,
+                     Hypothesis, Project, TailingsReport)
 
 log = logging.getLogger("chat")
 
@@ -42,12 +42,25 @@ SYSTEM_CHAT = """Ты — ассистент-интерпретатор сист
   СТРОГО из чисел контекста (не выдумывай и не пересчитывай): 3–10 строк,
   одна величина на график, Ni и Cu — отдельными графиками. Если графика не
   просили, но сравнение по 3+ числам просится само — тоже можно один.
+- Сравнение из 3+ строк оформляй markdown-таблицей (| колонка | ... |).
+- Если пользователь ПРЯМО просит действие — предложи его в "actions" (сам
+  ничего не выполняй, система покажет кнопку подтверждения). Доступно:
+  accept_hypothesis {"id"}, reject_hypothesis {"id", "reason"},
+  set_weights {"weights": {"money","capex","risk","novelty" — доли 0..1}},
+  build_roadmap {}. id бери только из контекста. label — короткая фраза
+  кнопки («Принять „Замена насадок…"»). Не предлагай, о чём не просили.
+  В тексте описывай действие как ПРЕДЛОЖЕНИЕ («могу установить…», «готов
+  принять…») — оно выполнится только после подтверждения кнопкой.
+- В "followups" дай 2–3 коротких вопроса-продолжения ОТ ЛИЦА ПОЛЬЗОВАТЕЛЯ
+  («А сколько из этого извлекаемо?») — по темам, где в контексте есть ответ.
 
 Ответ строго JSON: {"text": "ответ со ссылками в тексте",
 "references": [{"type": "rule|cell|hypothesis|chunk", "id": "..."}],
 "charts": [{"type": "bar", "title": "Потери Ni по классам", "unit": "т",
-"data": [{"label": "+125", "value": 1471.3}]}]}
-Поле charts опционально — пустой список, если график не нужен."""
+"data": [{"label": "+125", "value": 1471.3}]}],
+"actions": [{"type": "...", "params": {...}, "label": "..."}],
+"followups": ["...", "..."]}
+Поля charts/actions/followups опциональны — пустые списки, если не нужны."""
 
 
 # что пользователь видит на каждом экране — для вопросов «а что это тут?»
@@ -187,6 +200,9 @@ def answer(question: str, history: list[dict], report: TailingsReport,
                 for r in data.get("references", [])
                 if r.get("type") in ("rule", "cell", "hypothesis", "chunk")]
         charts = _parse_charts(data.get("charts"))
+        actions = _parse_actions(data.get("actions"), hypotheses)
+        followups = [str(f).strip()[:90] for f in (data.get("followups") or [])[:3]
+                     if str(f).strip()]
     except (LLMUnavailable, ValueError) as e:
         log.warning("чат: LLM недоступна (%s) — детерминированный ответ", e)
         return _offline_answer(ctx, diag, hypotheses, question)
@@ -195,7 +211,50 @@ def answer(question: str, history: list[dict], report: TailingsReport,
         refs = _scan_references(text, report, diag, hypotheses,
                                 kb_chunk_ids={c["chunk_id"]
                                               for c in ctx["фрагменты_литературы"]})
-    return ChatAnswer(text=text, references=refs, charts=charts)
+    return ChatAnswer(text=text, references=refs, charts=charts,
+                      actions=actions, followups=followups)
+
+
+_WEIGHT_KEYS = ("money", "capex", "risk", "novelty")
+
+
+def _parse_actions(raw, hypotheses: list[Hypothesis]) -> list[ChatAction]:
+    """Валидация действий из ответа модели: только известные типы, id гипотез —
+    только реально существующие, веса — доли 0..1. Кривое отбрасывается."""
+    out: list[ChatAction] = []
+    known_ids = {h.id for h in hypotheses}
+    titles = {h.id: h.title for h in hypotheses}
+    for a in (raw or [])[:8]:
+        if len(out) >= 3:
+            break
+        if not isinstance(a, dict):
+            continue
+        t = a.get("type")
+        p = a.get("params") or {}
+        params: dict = {}
+        if t in ("accept_hypothesis", "reject_hypothesis"):
+            hid = str(p.get("id", ""))
+            if hid not in known_ids:
+                continue
+            params = {"id": hid, "title": titles[hid]}
+            if t == "reject_hypothesis":
+                params["reason"] = str(p.get("reason", ""))[:200]
+        elif t == "set_weights":
+            try:
+                weights = {k: round(float(v), 3) for k, v in (p.get("weights") or {}).items()
+                           if k in _WEIGHT_KEYS and 0 <= float(v) <= 1}
+            except (TypeError, ValueError):
+                continue
+            if not weights:
+                continue
+            params = {"weights": weights}
+        elif t == "build_roadmap":
+            params = {}
+        else:
+            continue
+        label = str(a.get("label", "")).strip()[:80]
+        out.append(ChatAction(type=t, params=params, label=label))
+    return out
 
 
 def _parse_charts(raw) -> list[ChatChart]:

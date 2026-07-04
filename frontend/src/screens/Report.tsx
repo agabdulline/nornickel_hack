@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { api, fmt } from '../api'
+import { useChatHighlight } from '../highlight'
 import type { LossCell, TailingsReport } from '../types'
 import {
   Badge, ErrorBox, Icon, PageHeader, Panel, SectionLabel, Segmented, Spinner, StatCard,
@@ -22,6 +23,9 @@ export default function Report() {
     .then(r => { setReports(r.reports); setTailType(t => t || r.reports[0]?.tail_type || '') })
     .catch(() => setReports([]))
   useEffect(() => { load() }, [pid])  // eslint-disable-line react-hooks/exhaustive-deps
+
+  // подсветка ячейки минералогии, на которую указал ассистент в чате
+  useChatHighlight(reports !== null)
 
   const upload = async (file: File) => {
     setUploading(true); setErr('')
@@ -228,7 +232,7 @@ export default function Report() {
                         if (!c) return <td key={f} className="text-right text-faint">—</td>
                         const rec = c.provenance === 'recovered_math' || c.provenance === 'recovered_llm'
                         return (
-                          <td key={f}
+                          <td key={f} data-hl={`cell:${s.label}/${f}/${el}`}
                             className={'num text-right cursor-pointer transition-colors hover:bg-brand-tint ' +
                               (rec ? 'recovered-cell ' : '') +
                               (!c.recoverable ? 'text-faint' : '')}

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from 'react'
 import { useParams } from 'react-router-dom'
 import { api, fmt, fxLabel, fxReady } from '../api'
+import { DATA_CHANGED_EVENT, useChatHighlight } from '../highlight'
 import type { Hypothesis, RoadmapItem } from '../types'
 import { ErrorBox, Icon, Modal, PageHeader, Panel, SectionLabel, Segmented, Spinner } from '../components/common'
 
@@ -10,7 +11,13 @@ export default function ExportScreen() {
   const [hyps, setHyps] = useState<Hypothesis[] | null>(null)
   const [err, setErr] = useState('')
 
-  useEffect(() => { api.hypotheses(pid).then(setHyps).catch(e => setErr(String(e))) }, [pid])
+  useEffect(() => {
+    const load = () => api.hypotheses(pid).then(setHyps).catch(e => setErr(String(e)))
+    load()
+    // ассистент мог принять/отклонить гипотезу или переранжировать из чата
+    window.addEventListener(DATA_CHANGED_EVENT, load)
+    return () => window.removeEventListener(DATA_CHANGED_EVENT, load)
+  }, [pid])
 
   // после загрузки курса ЦБ перерисовываем суммы в ₽
   const [, setFxTick] = useState(0)
@@ -153,7 +160,15 @@ function RoadmapTab({ pid, hyps }: { pid: string; hyps: Hypothesis[] }) {
   // модалка-разбор принятого конфликта (клик по значку ⚠ на стадии)
   const [explain, setExplain] = useState<RoadmapItem | null>(null)
 
-  useEffect(() => { api.roadmap(pid).then(setItems).catch(() => setItems([])) }, [pid])
+  useEffect(() => {
+    const load = () => api.roadmap(pid).then(setItems).catch(() => setItems([]))
+    load()
+    window.addEventListener(DATA_CHANGED_EVENT, load)
+    return () => window.removeEventListener(DATA_CHANGED_EVENT, load)
+  }, [pid])
+
+  // подсветка строки Ганта, на которую указал ассистент
+  useChatHighlight(items !== null)
 
   const build = async () => {
     setErr('')
@@ -273,7 +288,7 @@ function RoadmapTab({ pid, hyps }: { pid: string; hyps: Hypothesis[] }) {
           {[...byHyp.entries()].map(([hid, stages]) => {
             const h = hyps.find(x => x.id === hid)
             return (
-              <div key={hid}>
+              <div key={hid} data-hl={`hypothesis:${hid}`}>
                 <div className="flex items-center h-9">
                   <button className="w-64 shrink-0 text-left text-sm truncate pr-2 hover:text-brand transition-colors"
                     title={stages[0].hypothesis_title}

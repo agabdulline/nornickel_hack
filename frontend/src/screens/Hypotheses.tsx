@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { api, fmt, fxLabel, fxReady } from '../api'
-import { useChatHighlight } from '../highlight'
+import { DATA_CHANGED_EVENT, useChatHighlight } from '../highlight'
 import type { Hypothesis } from '../types'
 import {
   Badge, CapexBadge, ChunkModal, EmptyBox, ErrorBox, Icon, Meter, PageHeader, Panel,
@@ -65,7 +65,11 @@ export default function Hypotheses() {
   const [chunk, setChunk] = useState<{ id: string; quote: string } | null>(null)
 
   useEffect(() => {
-    api.hypotheses(pid).then(setHyps).catch(e => setErr(String(e)))
+    const load = () => api.hypotheses(pid).then(setHyps).catch(e => setErr(String(e)))
+    load()
+    // ассистент мог принять/отклонить/переранжировать из чата
+    window.addEventListener(DATA_CHANGED_EVENT, load)
+    return () => window.removeEventListener(DATA_CHANGED_EVENT, load)
   }, [pid])
 
   // после загрузки курса ЦБ перерисовываем суммы в ₽

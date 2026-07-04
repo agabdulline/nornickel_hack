@@ -66,3 +66,11 @@ export function useChatHighlight(ready: boolean, deps: unknown[] = []) {
 }
 
 export const HIGHLIGHT_EVENT = EVT
+
+/** Ассистент выполнил действие (принял гипотезу, переранжировал, построил
+ *  роадмап) — открытые экраны перезагружают данные по этому событию. */
+export const DATA_CHANGED_EVENT = 'fh-data-changed'
+
+export function notifyDataChanged() {
+  window.dispatchEvent(new CustomEvent(DATA_CHANGED_EVENT))
+}

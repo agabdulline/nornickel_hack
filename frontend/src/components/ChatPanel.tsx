@@ -1,17 +1,26 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { api, fmt } from '../api'
-import { requestHighlight } from '../highlight'
-import type { ChatChart, ChatMeta, ChatReference } from '../types'
+import { notifyDataChanged, requestHighlight } from '../highlight'
+import type { ChatAction, ChatChart, ChatMeta, ChatReference } from '../types'
 import { ChunkModal, Icon, Chip, SectionLabel } from './common'
+
+/** Предложенное ассистентом действие + его судьба после клика. */
+interface ActionState {
+  action: ChatAction
+  status: 'offered' | 'running' | 'done' | 'failed'
+  note?: string
+}
 
 interface Msg {
   role: 'user' | 'assistant'
   content: string
   refs?: ChatReference[]
   charts?: ChatChart[]
-  error?: boolean      // сообщение-ошибка с кнопкой «Повторить»
-  retryText?: string   // какой вопрос пересылать при ретрае
+  actions?: ActionState[]   // эфемерные: живут до перезагрузки панели
+  followups?: string[]      // чипсы-продолжения (показываются у последнего ответа)
+  error?: boolean           // сообщение-ошибка с кнопкой «Повторить»
+  retryText?: string        // какой вопрос пересылать при ретрае
 }
 
 const SUGGESTIONS = [
@@ -88,9 +97,9 @@ function RefLink({ label, refTarget, onRef }: {
   )
 }
 
-/** Текст ответа: **жирный** и кликабельные [ссылки] прямо в тексте.
+/** Инлайн-разметка: **жирный** и кликабельные [ссылки].
  *  Составная скобка [R1, +125/…, −125+71/…] разбивается на отдельные ссылки. */
-function RichText({ text, refs, onRef }: {
+function InlineMd({ text, refs, onRef }: {
   text: string; refs: ChatReference[]; onRef: (r: ChatReference) => void
 }) {
   const parts = text.split(/(\[[^\][\n]{1,160}\]|\*\*[^*\n]+\*\*)/g)
@@ -119,6 +128,56 @@ function RichText({ text, refs, onRef }: {
         }
         return <span key={i}>{p}</span>
       })}
+    </>
+  )
+}
+
+const isTableRow = (l: string) => /^\s*\|.*\|\s*$/.test(l)
+const isTableSep = (l: string) => /^\s*\|[\s:|-]+\|\s*$/.test(l)
+
+/** Текст ответа блоками: markdown-таблицы + инлайн-разметка остального. */
+function RichText({ text, refs, onRef }: {
+  text: string; refs: ChatReference[]; onRef: (r: ChatReference) => void
+}) {
+  const lines = text.split('\n')
+  const blocks: ({ kind: 'text'; content: string } | { kind: 'table'; rows: string[][] })[] = []
+  let i = 0
+  while (i < lines.length) {
+    if (isTableRow(lines[i])) {
+      const rows: string[][] = []
+      while (i < lines.length && isTableRow(lines[i])) {
+        if (!isTableSep(lines[i]))
+          rows.push(lines[i].trim().replace(/^\||\|$/g, '').split('|').map(c => c.trim()))
+        i++
+      }
+      if (rows.length >= 2) blocks.push({ kind: 'table', rows })
+      else blocks.push({ kind: 'text', content: rows.map(r => r.join(' | ')).join('\n') })
+      continue
+    }
+    const buf: string[] = []
+    while (i < lines.length && !isTableRow(lines[i])) { buf.push(lines[i]); i++ }
+    blocks.push({ kind: 'text', content: buf.join('\n') })
+  }
+  return (
+    <>
+      {blocks.map((b, k) => b.kind === 'table' ? (
+        <div key={k} className="overflow-x-auto my-2 not-italic">
+          <table className="tbl text-[12.5px]">
+            <thead>
+              <tr>{b.rows[0].map((c, j) =>
+                <th key={j}><InlineMd text={c} refs={refs} onRef={onRef} /></th>)}</tr>
+            </thead>
+            <tbody>
+              {b.rows.slice(1).map((r, ri) => (
+                <tr key={ri}>{r.map((c, j) =>
+                  <td key={j}><InlineMd text={c} refs={refs} onRef={onRef} /></td>)}</tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : (
+        <span key={k}><InlineMd text={b.content} refs={refs} onRef={onRef} /></span>
+      ))}
     </>
   )
 }
@@ -233,8 +292,12 @@ export default function ChatPanel({ pid, onClose }: { pid?: string; onClose: () 
           setActive(cid)
         }
         const ans = await api.chat(pid, text, cid, page)
-        setMsgs(m => [...m, { role: 'assistant', content: ans.text,
-                              refs: ans.references, charts: ans.charts }])
+        setMsgs(m => [...m, {
+          role: 'assistant', content: ans.text,
+          refs: ans.references, charts: ans.charts,
+          actions: (ans.actions ?? []).map(a => ({ action: a, status: 'offered' as const })),
+          followups: ans.followups,
+        }])
         refreshChats()   // подхватить авто-заголовок диалога
       } else {
         const ans = await api.kbAsk(text)
@@ -287,9 +350,52 @@ export default function ChatPanel({ pid, onClose }: { pid?: string; onClose: () 
   const openRef = (r: ChatReference) => {
     if (r.type === 'chunk') { setChunk(r.id); return }
     if (!pid) return
-    // экран подсветит цель на ~5 секунд (см. highlight.ts)
+    // экран подсветит цель на ~5 секунд (см. highlight.ts); если цель есть
+    // на текущем экране (Гант, таблица минералогии) — подсвечиваем на месте
     requestHighlight({ type: r.type, id: r.id })
-    nav(r.type === 'hypothesis' ? `/p/${pid}/hypotheses` : `/p/${pid}/map`)
+    if (r.type === 'hypothesis') {
+      if (page !== 'export') nav(`/p/${pid}/hypotheses`)
+    } else if (r.type === 'cell') {
+      if (page !== 'report') nav(`/p/${pid}/map`)
+    } else nav(`/p/${pid}/map`)
+  }
+
+  /** Выполнить предложенное ассистентом действие (кнопка = подтверждение). */
+  const runAction = async (msgIdx: number, actIdx: number) => {
+    const st = msgs[msgIdx]?.actions?.[actIdx]
+    if (!pid || !st || st.status === 'running' || st.status === 'done') return
+    const a = st.action
+    const patch = (upd: Partial<ActionState>) => setMsgs(m => m.map((msg, i) =>
+      i !== msgIdx ? msg : {
+        ...msg,
+        actions: msg.actions?.map((x, j) => j === actIdx ? { ...x, ...upd } : x),
+      }))
+    let reason = a.params.reason ?? ''
+    if (a.type === 'reject_hypothesis' && !reason.trim()) {
+      reason = window.prompt('Причина отклонения (уйдёт в стоп-лист регенерации):') ?? ''
+      if (!reason.trim()) return
+    }
+    patch({ status: 'running' })
+    try {
+      let note = ''
+      if (a.type === 'accept_hypothesis') {
+        await api.feedback(a.params.id!, 'accept')
+        note = 'Гипотеза принята'
+      } else if (a.type === 'reject_hypothesis') {
+        await api.feedback(a.params.id!, 'reject', reason)
+        note = 'Гипотеза отклонена, причина ушла в стоп-лист'
+      } else if (a.type === 'set_weights') {
+        await api.rerank(pid, a.params.weights ?? {})
+        note = 'Веса применены, список переранжирован'
+      } else {
+        await api.roadmapBuild(pid)
+        note = 'Дорожная карта построена'
+      }
+      patch({ status: 'done', note })
+      notifyDataChanged()   // открытые экраны перезагрузят данные
+    } catch (e) {
+      patch({ status: 'failed', note: e instanceof Error ? e.message : String(e) })
+    }
   }
 
   const refLabel = (r: ChatReference) =>
@@ -312,7 +418,8 @@ export default function ChatPanel({ pid, onClose }: { pid?: string; onClose: () 
             {kbMode ? 'Ассистент · база знаний' : 'Ассистент проекта'}
           </div>
           <div className="text-[11px] leading-tight" style={{ color: 'var(--c-faint)' }}>
-            {kbMode ? 'Отвечает по литературе с цитатами' : 'Отвечает со ссылками на источники'}
+            {kbMode ? 'Эксперт по обогащению · отвечает по литературе'
+                    : 'Отвечает со ссылками на источники'}
           </div>
         </div>
         <div className="flex items-center gap-1 ml-auto shrink-0">
@@ -364,8 +471,8 @@ export default function ChatPanel({ pid, onClose }: { pid?: string; onClose: () 
           <div className="animate-fade">
             <div className="text-sm leading-relaxed" style={{ color: 'var(--c-muted)' }}>
               {kbMode
-                ? 'Отвечаю на вопросы по базе знаний — с цитатами из литературы и номерами страниц.'
-                : 'Отвечаю на вопросы про этот отчёт, диагнозы и гипотезы — со ссылками на правила, ячейки и литературу. Могу построить график по числам отчёта.'}
+                ? 'Отвечаю на вопросы по обогащению — флотация, измельчение, реагентика — по книгам и статьям из базы знаний, с цитатами и номерами страниц. Вопросы по вашему отчёту и гипотезам — в чате внутри проекта.'
+                : 'Отвечаю на вопросы про этот отчёт, диагнозы и гипотезы — со ссылками на правила, ячейки и литературу. Могу построить график и выполнить действие: принять гипотезу, изменить веса, собрать дорожную карту.'}
             </div>
             <div className="mt-5">
               <SectionLabel>С чего начать</SectionLabel>
@@ -381,6 +488,7 @@ export default function ChatPanel({ pid, onClose }: { pid?: string; onClose: () 
 
         {msgs.map((m, i) => {
           const isUser = m.role === 'user'
+          const isLast = i === msgs.length - 1
           return (
             <div key={i} className={`animate-in flex flex-col ${isUser ? 'items-end' : 'items-start'}`}>
               <div
@@ -395,6 +503,37 @@ export default function ChatPanel({ pid, onClose }: { pid?: string; onClose: () 
                   : <RichText text={m.content} refs={m.refs ?? []} onRef={openRef} />}
                 {!isUser && (m.charts ?? []).map((c, n) => <ChartBlock key={n} chart={c} />)}
               </div>
+
+              {/* предложенные действия — кнопка и есть подтверждение */}
+              {(m.actions ?? []).length > 0 && (
+                <div className="flex flex-col gap-1.5 mt-1.5 w-[90%]">
+                  {m.actions!.map((st, n) => (
+                    <div key={n} className="card-2 px-3 py-2 flex items-center gap-2 text-[13px]">
+                      <span className="shrink-0" style={{ color: 'var(--c-brand)' }}>
+                        <Icon name="spark" className="w-4 h-4" />
+                      </span>
+                      <span className="flex-1 min-w-0 leading-snug">
+                        {st.action.label || st.action.type}
+                        {st.note && (
+                          <span className="block text-[11px]"
+                            style={{ color: st.status === 'failed' ? 'var(--c-danger)' : 'var(--c-ok)' }}>
+                            {st.status === 'done' ? '✓ ' : ''}{st.note}
+                          </span>
+                        )}
+                      </span>
+                      {st.status !== 'done' && (
+                        <button className="btn btn-primary btn-sm shrink-0"
+                          disabled={st.status === 'running'}
+                          onClick={() => runAction(i, n)}>
+                          {st.status === 'running' ? '…'
+                            : st.status === 'failed' ? 'Повторить' : 'Выполнить'}
+                        </button>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+
               {m.error && m.retryText && (
                 <div className="mt-1.5">
                   <Chip onClick={() => send(m.retryText!, true)}>
@@ -411,6 +550,15 @@ export default function ChatPanel({ pid, onClose }: { pid?: string; onClose: () 
                       <Icon name="arrowRight" className="w-3 h-3" />
                       {refLabel(r)}
                     </button>
+                  ))}
+                </div>
+              )}
+
+              {/* продолжения разговора — только у последнего ответа */}
+              {isLast && !isUser && !busy && (m.followups ?? []).length > 0 && (
+                <div className="flex flex-wrap gap-1.5 mt-2">
+                  {m.followups!.map(f => (
+                    <Chip key={f} onClick={() => send(f)}>{f}</Chip>
                   ))}
                 </div>
               )}

@@ -147,6 +147,59 @@ def test_chat_persists_history_per_dialog(client):
     assert c.delete(f"/api/projects/{pid}/chat/history").json()["cleared"] == 2
 
 
+# ---------- действия и продолжения ----------
+def test_parse_actions_validation():
+    from backend.app.chat import _parse_actions
+    hyps = [Hypothesis(id="h01-aaaaaa", title="Замена насадок", process_area="классификация")]
+    raw = [
+        {"type": "accept_hypothesis", "params": {"id": "h01-aaaaaa"}, "label": "Принять"},
+        {"type": "accept_hypothesis", "params": {"id": "h99-фейк"}},        # чужой id
+        {"type": "reject_hypothesis", "params": {"id": "h01-aaaaaa", "reason": "дорого"}},
+        {"type": "set_weights", "params": {"weights": {"money": 0.6, "мусор": 1, "risk": 2.0}}},
+        {"type": "drop_database", "params": {}},                            # не в белом списке
+    ]
+    acts = _parse_actions(raw, hyps)
+    types = [a.type for a in acts]
+    assert types == ["accept_hypothesis", "reject_hypothesis", "set_weights"]
+    assert acts[0].params == {"id": "h01-aaaaaa", "title": "Замена насадок"}
+    assert acts[1].params["reason"] == "дорого"
+    assert acts[2].params == {"weights": {"money": 0.6}}   # мусор и >1 отброшены
+    assert _parse_actions(None, hyps) == []
+
+
+@requires_data
+def test_chat_answer_with_actions_and_followups(tmp_path):
+    from backend.app.chat import answer
+    from backend.app.diagnostics import run_diagnostics
+    from backend.app.parser.recover import recover
+    from backend.app.parser.xlsx import parse_workbook
+
+    res = parse_workbook(find_case_file(r"Пример 2/Хвосты.*Вкр\.xlsx$"))
+    report = res.reports[0]
+    recover(report, llm=None)
+    diag = run_diagnostics(report)
+    kb = KBIndex(root=tmp_path / "kb", use_dense=False)
+    project = Project(id="p1", plant="НОФ (вкрапленные)")
+    hyps = [Hypothesis(id="h01-aaaaaa", title="Замена насадок", process_area="классификация")]
+
+    class ActLLM:
+        enabled = True
+
+        def chat(self, messages, **kw):
+            return {"content": json.dumps({
+                "text": "Могу принять гипотезу №1 [h01-aaaaaa].",
+                "references": [{"type": "hypothesis", "id": "h01-aaaaaa"}],
+                "actions": [{"type": "accept_hypothesis", "params": {"id": "h01-aaaaaa"},
+                             "label": "Принять «Замена насадок»"}],
+                "followups": ["А какие у неё риски?", "Что по эффекту в деньгах?", "", "лишний 4-й"],
+            }, ensure_ascii=False), "usage": {}}
+
+    ans = answer("прими первую гипотезу", [], report, diag, hyps, project, kb, llm=ActLLM())
+    assert len(ans.actions) == 1 and ans.actions[0].type == "accept_hypothesis"
+    assert ans.actions[0].params["id"] == "h01-aaaaaa"
+    assert ans.followups == ["А какие у неё риски?", "Что по эффекту в деньгах?"]
+
+
 # ---------- графики ----------
 def test_parse_charts_validation():
     from backend.app.chat import _parse_charts

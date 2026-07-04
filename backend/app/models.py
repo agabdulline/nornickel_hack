@@ -236,10 +236,21 @@ class ChatChart(BaseModel):
     data: list[ChartPoint] = Field(default_factory=list)
 
 
+class ChatAction(BaseModel):
+    """Действие, которое ассистент предлагает выполнить. Никогда не выполняется
+    само: фронт показывает кнопку подтверждения и дёргает обычные API."""
+    type: Literal["accept_hypothesis", "reject_hypothesis", "set_weights",
+                  "build_roadmap"]
+    params: dict = Field(default_factory=dict)
+    label: str = ""
+
+
 class ChatAnswer(BaseModel):
     text: str
     references: list[ChatReference] = Field(default_factory=list)
     charts: list[ChatChart] = Field(default_factory=list)
+    actions: list[ChatAction] = Field(default_factory=list)      # эфемерные, не в истории
+    followups: list[str] = Field(default_factory=list)           # чипсы-продолжения
 
 
 class ProjectConstraints(BaseModel):

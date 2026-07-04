@@ -138,7 +138,15 @@ export interface ChatChart {
   unit?: string
   data: { label: string; value: number }[]
 }
-export interface ChatAnswer { text: string; references: ChatReference[]; charts?: ChatChart[] }
+export interface ChatAction {
+  type: 'accept_hypothesis' | 'reject_hypothesis' | 'set_weights' | 'build_roadmap'
+  params: { id?: string; title?: string; reason?: string; weights?: Record<string, number> }
+  label: string
+}
+export interface ChatAnswer {
+  text: string; references: ChatReference[]; charts?: ChatChart[]
+  actions?: ChatAction[]; followups?: string[]
+}
 export interface ChatMeta {
   id: string; project_id: string; title: string
   created_at: string; updated_at: string; messages: number

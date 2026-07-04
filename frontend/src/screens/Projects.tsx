@@ -3,11 +3,12 @@ import { Link } from 'react-router-dom'
 import { api } from '../api'
 import type { Project } from '../types'
 import { SiteHeader } from '../components/SiteHeader'
-import { ProjectCard, projectStep } from '../components/ProjectCard'
+import { ProjectCard, objectLabel, projectStep } from '../components/ProjectCard'
 import { EmptyBox, Icon, PageHeader, SectionLabel, Spinner, StatCard } from '../components/common'
 
 export default function Projects() {
   const [projects, setProjects] = useState<Project[] | null>(null)
+  const [lineNames, setLineNames] = useState<Map<string, string>>(new Map())
   const [q, setQ] = useState('')
 
   useEffect(() => {
@@ -15,6 +16,7 @@ export default function Projects() {
       .then(list => Promise.all(list.map(p => api.project(p.id).catch(() => p))))
       .then(setProjects)
       .catch(() => setProjects([]))
+    api.lines().then(ls => setLineNames(new Map(ls.map(l => [l.id, l.name])))).catch(() => {})
   }, [])
 
   const removeProject = async (p: Project) => {
@@ -66,7 +68,9 @@ export default function Projects() {
               ? <EmptyBox text="Проектов нет" hint="Создайте проект на главной" icon="doc" />
               : (
                 <div className="space-y-3 stagger">
-                  {filtered.map(p => <ProjectCard key={p.id} p={p} onDelete={removeProject} />)}
+                  {filtered.map(p =>
+                    <ProjectCard key={p.id} p={p} onDelete={removeProject}
+                      objectName={objectLabel(p, lineNames)} />)}
                 </div>
               )}
         </div>

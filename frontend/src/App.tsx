@@ -14,7 +14,7 @@ import KB from './screens/KB'
 import Projects from './screens/Projects'
 import { EmptyBox, Icon, Logo, Modal, SectionLabel, Spinner, Stepper, ThemeToggle } from './components/common'
 import { SiteHeader } from './components/SiteHeader'
-import { ProjectCard } from './components/ProjectCard'
+import { ProjectCard, objectLabel } from './components/ProjectCard'
 
 function emptyConstraints(): ProjectConstraints {
   return { equipment: [], materials: [] }
@@ -143,6 +143,8 @@ function ProjectLayout() {
 function Home() {
   const [projects, setProjects] = useState<Project[]>([])
   const [loadingProjects, setLoadingProjects] = useState(true)
+  // id линии -> отображаемое имя: чтобы на карточке показать объект проекта
+  const [lineNames, setLineNames] = useState<Map<string, string>>(new Map())
   const [name, setName] = useState('')
   const [line, setLine] = useState<Line | null>(null)
   const [goal, setGoal] = useState('Снижение потерь Ni и Cu в отвальных хвостах')
@@ -165,6 +167,9 @@ function Home() {
     finally { setLoadingProjects(false) }
   }
   useEffect(() => { load() }, [])
+  useEffect(() => {
+    api.lines().then(ls => setLineNames(new Map(ls.map(l => [l.id, l.name])))).catch(() => {})
+  }, [])
 
   const removeProject = async (p: Project) => {
     if (!window.confirm(
@@ -272,7 +277,9 @@ function Home() {
             ? <EmptyBox text="Пока нет проектов" hint="Создайте первый проект выше" icon="doc" />
             : (
               <div className="grid sm:grid-cols-2 gap-3 stagger">
-                {projects.slice(0, 4).map(p => <ProjectCard key={p.id} p={p} onDelete={removeProject} />)}
+                {projects.slice(0, 4).map(p =>
+                  <ProjectCard key={p.id} p={p} onDelete={removeProject}
+                    objectName={objectLabel(p, lineNames)} />)}
               </div>
             )}
         </div>

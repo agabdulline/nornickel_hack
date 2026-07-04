@@ -1,8 +1,17 @@
 import { Link } from 'react-router-dom'
 import type { Project } from '../types'
 import { Icon } from './common'
+import { NO_OBJECT_ID } from './lines'
 
 export const STEP_PATH = ['report', 'map', 'hypotheses', 'export']
+
+/** Читаемое название объекта (линия/лаборатория), к которому привязан проект,
+ * либо null — если объект не выбран. lineNames: id линии -> её отображаемое имя
+ * (plant проекта — это id линии, который может отличаться от имени). */
+export function objectLabel(p: Project, lineNames: Map<string, string>): string | null {
+  if (!p.plant || p.plant === NO_OBJECT_ID) return null
+  return lineNames.get(p.plant) ?? p.plant
+}
 
 /** Текущий шаг проекта (1..4) по наличию отчёта/гипотез. */
 export function projectStep(p: Project): number {
@@ -30,7 +39,9 @@ export function StepDots({ current, total = 4 }: { current: number; total?: numb
 
 /** Карточка проекта в списке (главная + страница «Проекты»).
  * `onDelete` включает кнопку удаления; клик по ней не открывает проект. */
-export function ProjectCard({ p, onDelete }: { p: Project; onDelete?: (p: Project) => void }) {
+export function ProjectCard({ p, onDelete, objectName }: {
+  p: Project; onDelete?: (p: Project) => void; objectName?: string | null
+}) {
   const step = projectStep(p)
   return (
     <Link to={`/p/${p.id}/${STEP_PATH[step - 1]}`}
@@ -43,6 +54,13 @@ export function ProjectCard({ p, onDelete }: { p: Project; onDelete?: (p: Projec
           )}
           {p.goal ? `Цель: ${p.goal}` : '—'}
         </div>
+        {objectName !== undefined && (
+          <div className="text-xs truncate mt-1 flex items-center gap-1"
+            style={{ color: objectName ? 'var(--c-faint)' : 'var(--c-warn)' }}>
+            <Icon name={objectName ? 'lock' : 'alert'} className="w-3 h-3 shrink-0" />
+            {objectName ? `Объект: ${objectName}` : 'Без привязки к объекту'}
+          </div>
+        )}
       </div>
       <StepDots current={step} />
       <div className="text-right shrink-0">

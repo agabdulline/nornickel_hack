@@ -63,7 +63,8 @@ def build_user_prompt(report_summary: dict, diagnoses: list[dict], chunks: list[
                       intervention_menu: dict | None = None,
                       flowsheet_summary: dict | None = None,
                       reagent_hints: list[dict] | None = None,
-                      few_shot: list[str] | None = None) -> str:
+                      few_shot: list[str] | None = None,
+                      project_materials: list[dict] | None = None) -> str:
     chunk_lines = "\n\n".join(
         f"[{c['chunk_id']}] ({c['source']}, с. {c['page']}):\n{c['text'][:1200]}"
         for c in chunks) or "(фрагментов нет — генерируй без цитат, поле citations пустое)"
@@ -96,6 +97,11 @@ def build_user_prompt(report_summary: dict, diagnoses: list[dict], chunks: list[
                      "расходом 0 г/т, а в литературе есть данные о его эффективности — "
                      "рассмотри гипотезу о вводе, цитируй указанные источники):\n"
                      + json.dumps(reagent_hints, ensure_ascii=False, indent=1))
+    if project_materials:
+        parts.append("МАТЕРИАЛЫ ПРОЕКТА, загруженные технологом (выдержки; регламенты, "
+                     "схемы, заметки — учитывай их специфику при выборе вмешательств, "
+                     "но НЕ цитируй как литературу, поле citations — только для чанков KB):\n"
+                     + json.dumps(project_materials, ensure_ascii=False, indent=1))
     if few_shot:
         parts.append("ОБРАЗЦЫ КОНКРЕТНОСТИ — реальные гипотезы экспертов ДРУГИХ фабрик "
                      "(показывают калибр детализации: конкретный агрегат/параметр/число; "

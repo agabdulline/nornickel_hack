@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { api, fmt } from '../api'
 import { useChatHighlight } from '../highlight'
+import ProjectFiles from '../components/ProjectFiles'
 import type { LossCell, TailingsReport } from '../types'
 import {
   Badge, ErrorBox, Icon, PageHeader, Panel, SectionLabel, Segmented, Spinner, StatCard,
@@ -267,6 +268,9 @@ export default function Report() {
           </span>
         </SectionLabel>
       </Panel>
+
+      {/* материалы проекта: OCR-текст учитывается при генерации, схемы — на диагностике */}
+      <ProjectFiles pid={pid} />
     </div>
   )
 }

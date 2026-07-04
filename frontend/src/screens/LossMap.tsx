@@ -19,30 +19,31 @@ const TYPE_LABEL: Record<string, string> = {
   flotation: 'Флотация', thickening: 'Сгущение', magnetic: 'Магнитная', gravity: 'Гравитация',
 }
 
-/** Исходные изображения схем/регламента, из которых оцифрован флоушит.
+export interface SchemeItem { label: string; url: string }
+
+/** Исходные изображения схем фабрики (из БД) + схемы из материалов проекта.
  * Несколько файлов — вкладками сверху, ниже рисуется только выбранный. */
-function FlowsheetSources({ factory, files, onClose, initial = 0 }: {
-  factory: string; files: string[]; onClose: () => void; initial?: number
+function FlowsheetSources({ factory, items, onClose, initial = 0 }: {
+  factory: string; items: SchemeItem[]; onClose: () => void; initial?: number
 }) {
   const [active, setActive] = useState(initial)
-  const i = Math.min(active, files.length - 1)
+  const i = Math.min(active, items.length - 1)
   return (
     <Modal wide onClose={onClose}
-      title={`Исходные схемы: ${factory} (${files.length} изобр.)`}>
-      {files.length > 1 && (
+      title={`Схемы: ${factory} (${items.length} изобр.)`}>
+      {items.length > 1 && (
         <div className="flex flex-wrap gap-1.5 mb-3 pb-3 border-b border-line">
-          {files.map((name, n) => (
-            <button key={name} type="button" onClick={() => setActive(n)}
-              className={`chip ${n === i ? 'chip-active' : ''}`}>{name}</button>
+          {items.map((it, n) => (
+            <button key={n} type="button" onClick={() => setActive(n)}
+              className={`chip ${n === i ? 'chip-active' : ''}`}>{it.label}</button>
           ))}
         </div>
       )}
       <figure>
-        {files.length <= 1 && (
-          <figcaption className="text-xs text-muted mb-1.5">{files[i]}</figcaption>
+        {items.length <= 1 && (
+          <figcaption className="text-xs text-muted mb-1.5">{items[i]?.label}</figcaption>
         )}
-        <img src={`/api/flowsheet-image/${encodeURIComponent(factory)}/${i}`}
-          alt={files[i]} loading="lazy"
+        <img src={items[i]?.url} alt={items[i]?.label} loading="lazy"
           className="max-w-full rounded-md border border-line bg-white" />
       </figure>
     </Modal>
@@ -50,8 +51,9 @@ function FlowsheetSources({ factory, files, onClose, initial = 0 }: {
 }
 
 /** Граф переделов из оцифрованного регламента фабрики (реальные названия операций). */
-function FlowsheetGraph({ factory, fs, highlight }: {
+function FlowsheetGraph({ factory, fs, highlight, sources }: {
   factory: string | null; fs: FlowsheetData; highlight: Set<string>
+  sources: SchemeItem[]
 }) {
   const [showSources, setShowSources] = useState<number | null>(null)
   const [collapsed, setCollapsed] = useState(false)
@@ -61,7 +63,6 @@ function FlowsheetGraph({ factory, fs, highlight }: {
     .filter(g => g.nodes.length > 0)
   const tails = fs.streams.filter(s => s.kind === 'tails')
   const tailFrom = new Set(tails.map(s => s.from))
-  const sources = fs.source_files ?? []
 
   const regime = (n: FlowsheetNode) => {
     const bits: string[] = []
@@ -97,15 +98,14 @@ function FlowsheetGraph({ factory, fs, highlight }: {
       }>
       {!collapsed && !digitized && factory && (
         <div className="flex flex-wrap gap-4 animate-in">
-          {sources.map((name, i) => (
-            <figure key={name} className="cursor-pointer group" onClick={() => setShowSources(i)}
+          {sources.map((it, i) => (
+            <figure key={i} className="cursor-pointer group" onClick={() => setShowSources(i)}
               title="Открыть в полном размере">
-              <img src={`/api/flowsheet-image/${encodeURIComponent(factory)}/${i}`} alt={name}
-                loading="lazy"
+              <img src={it.url} alt={it.label} loading="lazy"
                 className="h-44 max-w-full rounded-md border border-line bg-white object-contain
                   transition-colors group-hover:border-brand" />
               <figcaption className="text-[11px] mt-1 text-center"
-                style={{ color: 'var(--c-faint)' }}>{name}</figcaption>
+                style={{ color: 'var(--c-faint)' }}>{it.label}</figcaption>
             </figure>
           ))}
         </div>
@@ -145,7 +145,7 @@ function FlowsheetGraph({ factory, fs, highlight }: {
         </div>
       )}
       {showSources !== null && factory && (
-        <FlowsheetSources factory={factory} files={sources} initial={showSources}
+        <FlowsheetSources factory={factory} items={sources} initial={showSources}
           onClose={() => setShowSources(null)} />
       )}
     </Panel>
@@ -235,6 +235,27 @@ export default function LossMap() {
       .catch(() => { if (live) setFsInfo(null) })
     return () => { live = false }
   }, [pid])
+
+  // схемы для просмотра: изображения фабрики из БД (сид кейса + загруженные)
+  // и картинки-схемы из материалов проекта (kind=scheme, распознаны OCR)
+  const [schemes, setSchemes] = useState<SchemeItem[]>([])
+  useEffect(() => {
+    const factory = fsInfo?.factory
+    if (!factory) { setSchemes([]); return }
+    let live = true
+    Promise.all([
+      api.factories().catch(() => []),
+      api.projectFiles(pid).catch(() => []),
+    ]).then(([facts, files]) => {
+      if (!live) return
+      const own = (facts.find(f => f.factory === factory)?.images ?? [])
+        .map(img => ({ label: img.filename, url: api.factoryImageUrl(img.id) }))
+      const proj = files.filter(f => f.kind === 'scheme')
+        .map(f => ({ label: `Материал проекта: ${f.filename}`, url: api.projectFileUrl(pid, f.id) }))
+      setSchemes([...own, ...proj])
+    })
+    return () => { live = false }
+  }, [pid, fsInfo?.factory])
 
   // Смена проекта переиспользует этот же компонент (роут /p/:pid/map не меняется),
   // поэтому вручную сбрасываем ошибку и данные прошлого проекта — иначе «залипают»
@@ -400,7 +421,7 @@ export default function LossMap() {
         {/* правая колонка: схема фабрики — узкая, занимает высоту */}
         {fsInfo?.flowsheet && (
           <div className="min-w-0">
-            <FlowsheetGraph factory={fsInfo.factory} fs={fsInfo.flowsheet}
+            <FlowsheetGraph factory={fsInfo.factory} fs={fsInfo.flowsheet} sources={schemes}
               highlight={new Set(diag.diagnoses.flatMap(d => d.node_refs ?? []))} />
           </div>
         )}

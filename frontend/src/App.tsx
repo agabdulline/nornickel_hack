@@ -146,6 +146,8 @@ function Home() {
   const [name, setName] = useState('')
   const [line, setLine] = useState<Line | null>(null)
   const [goal, setGoal] = useState('Снижение потерь Ni и Cu в отвальных хвостах')
+  // материалы, приложенные в модалке создания: зальются после создания проекта
+  const [pendingFiles, setPendingFiles] = useState<File[]>([])
   const [factory, setFactory] = useState('')   // '' = авто-определение по xlsx
 
   const [constraints, setConstraints] = useState<ProjectConstraints>(emptyConstraints())
@@ -186,6 +188,11 @@ function Home() {
         plant: line.id, name: finalName, goal,
         project_constraints: constraints, factory: factory || undefined,
       })
+      // материалы, приложенные в модалке, заливаем сразу после создания
+      // (картинки распознает Яндекс OCR; текст учитывается при генерации)
+      for (const f of pendingFiles) {
+        try { await api.projectFileUpload(p.id, f) } catch { /* не блокируем создание */ }
+      }
       location.hash = `#/p/${p.id}/report`
     } catch (e) { setErr(String(e)) }
   }
@@ -299,6 +306,36 @@ function Home() {
               </select>
             </label>
             {line && <ConstraintsSection line={line} value={constraints} onChange={setConstraints} />}
+
+            {/* материалы проекта: зальются после создания; картинки распознает OCR */}
+            <div className="block">
+              <span className="field-label">Материалы (регламенты, схемы, фото, заметки)</span>
+              <div className="mt-1.5 space-y-1.5">
+                {pendingFiles.map((f, i) => (
+                  <div key={i} className="card-2 px-3 py-1.5 flex items-center gap-2 text-sm">
+                    <Icon name="doc" className="w-4 h-4 shrink-0 text-faint" />
+                    <span className="flex-1 truncate">{f.name}</span>
+                    <button type="button" className="shrink-0 hover:text-danger"
+                      onClick={() => setPendingFiles(fs => fs.filter((_, n) => n !== i))}>
+                      <Icon name="x" className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                ))}
+                <input type="file" multiple className="hidden" id="new-project-files"
+                  accept=".png,.jpg,.jpeg,.webp,.bmp,.pdf,.txt,.md,.csv,.docx"
+                  onChange={e => {
+                    setPendingFiles(fs => [...fs, ...Array.from(e.target.files ?? [])])
+                    e.target.value = ''
+                  }} />
+                <label htmlFor="new-project-files" className="btn btn-sm cursor-pointer">
+                  <Icon name="upload" className="w-4 h-4" /> Прикрепить файлы
+                </label>
+                <div className="text-[11px]" style={{ color: 'var(--c-faint)' }}>
+                  Картинки распознаёт Яндекс OCR; текст учитывается при генерации гипотез,
+                  схемы показываются на диагностике.
+                </div>
+              </div>
+            </div>
           </div>
           <div className="flex items-center gap-3 mt-4 pt-3 border-t" style={{ borderColor: 'var(--c-line)' }}>
             <button className="btn btn-primary" onClick={create}>

@@ -85,6 +85,7 @@ def generate_hypotheses(report: TailingsReport, diag: DiagnosticsResult, *,
                         flowsheet_summary: dict | None = None,
                         reagent_hints: list[dict] | None = None,
                         material: str = "отвальные хвосты",
+                        project_materials: list[dict] | None = None,
                         n_samples: int = 1) -> list[Hypothesis]:
     """n_samples > 1 — best-of-N: параллельные независимые генерации, объединение
     и смысловой дедуп (LLM недобирает направления в одиночном сэмпле)."""
@@ -121,7 +122,8 @@ def generate_hypotheses(report: TailingsReport, diag: DiagnosticsResult, *,
                                    intervention_menu=pack().get("intervention_menu"),
                                    flowsheet_summary=flowsheet_summary,
                                    reagent_hints=reagent_hints,
-                                   few_shot=few_shot)
+                                   few_shot=few_shot,
+                                   project_materials=project_materials)
         log.info("Вызов STRONG-модели «%s» (json_mode, промпт %d симв., n_samples=%d, "
                  "few_shot=%d) — может занять минуты…",
                  model_name, len(prompt), n_samples, len(few_shot))

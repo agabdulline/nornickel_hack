@@ -6,6 +6,7 @@ import {
   commitLineEdits, type DraftEquipment, type DraftMaterial, EquipmentRows, MaterialRows,
   toDraftEquipment, toDraftMaterial,
 } from '../components/lines'
+import FactoryImages from '../components/FactoryImages'
 
 const KIND_OPTIONS: LineKind[] = ['производственная линия', 'лаборатория']
 const OWNERSHIP_OPTIONS: LineOwnership[] = ['в штате компании', 'внешний подрядчик/партнёр']
@@ -494,6 +495,7 @@ export default function KB() {
   return (
     <div className="space-y-4">
       <LinesSection />
+      <FactoryImages />
       {err && <ErrorBox error={err} />}
 
       <Panel title="Вопрос к базе знаний"

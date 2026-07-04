@@ -165,6 +165,18 @@ export interface KbDoc {
   ocr_done?: number; error?: string;
   lang?: 'ru' | 'en' | 'zh'; enabled?: boolean; topic?: string;
 }
+export interface FactoryImage {
+  id: string; factory: string; filename: string; caption: string;
+  path: string; created_at: string;
+}
+export interface FactoryInfo { factory: string; digitized: boolean; images: FactoryImage[] }
+
+export interface ProjectFile {
+  id: string; project_id: string; filename: string;
+  kind: 'scheme' | 'image' | 'pdf' | 'text' | 'other';
+  status: string; chars: number; preview: string; created_at: string;
+}
+
 export interface KbHit {
   chunk_id: string; text: string; source: string; page: number; score: number;
 }

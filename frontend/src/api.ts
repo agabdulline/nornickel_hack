@@ -1,5 +1,6 @@
 import type {
-  ChatAnswer, ChatChart, ChatMeta, ChatReference, DiagnosticsResult, Equipment,
+  ChatAnswer, ChatChart, ChatMeta, ChatReference, DiagnosticsResult, Equipment, FactoryImage,
+  FactoryInfo, ProjectFile,
   FlowsheetData, Hypothesis, KbDoc, Line, LineMaterial, Material, Project,
   ProjectConstraints, RoadmapItem, StopEntry, TailingsReport,
 } from './types'
@@ -172,6 +173,34 @@ export const api = {
     j<{ chat_id: string | null; messages: ChatHistoryMsg[] }>(
       fetch(`/api/projects/${pid}/chat/history` +
         (chatId ? `?chat_id=${encodeURIComponent(chatId)}` : ''))),
+
+  // ---------- схемы фабрик (БД) и материалы проекта ----------
+  factories: () => j<FactoryInfo[]>(fetch('/api/factories')),
+  factoryImageUpload: (factory: string, file: File) => {
+    const fd = new FormData()
+    fd.append('file', file)
+    return j<FactoryImage>(fetch(`/api/factories/${encodeURIComponent(factory)}/images`, {
+      method: 'POST', body: fd,
+    }))
+  },
+  factoryImagePatch: (id: string, caption: string) =>
+    j<FactoryImage>(fetch(`/api/factory-images/${id}`, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ caption }),
+    })),
+  factoryImageDelete: (id: string) =>
+    j<{ ok: boolean }>(fetch(`/api/factory-images/${id}`, { method: 'DELETE' })),
+  factoryImageUrl: (id: string) => `/api/factory-images/${id}/file`,
+
+  projectFiles: (pid: string) => j<ProjectFile[]>(fetch(`/api/projects/${pid}/files`)),
+  projectFileUpload: (pid: string, file: File) => {
+    const fd = new FormData()
+    fd.append('file', file)
+    return j<ProjectFile>(fetch(`/api/projects/${pid}/files`, { method: 'POST', body: fd }))
+  },
+  projectFileDelete: (pid: string, fid: string) =>
+    j<{ ok: boolean }>(fetch(`/api/projects/${pid}/files/${fid}`, { method: 'DELETE' })),
+  projectFileUrl: (pid: string, fid: string) => `/api/projects/${pid}/files/${fid}/file`,
 
   roadmapBuild: (pid: string) =>
     j<RoadmapItem[]>(fetch(`/api/projects/${pid}/roadmap/build`, { method: 'POST' })),

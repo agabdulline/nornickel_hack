@@ -6,6 +6,7 @@ import logging
 import unicodedata
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile
+from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel, Field
 
 from .diagnostics import DiagnosticsResult, run_diagnostics
@@ -16,6 +17,7 @@ from .kb import search as kb_search
 from .kb.index import KBIndex, default_index
 from .kb.ingest import ingest_pdf
 from .llm import client as llm_client
+from .materials import materials_for_prompt
 from .models import (Equipment, Hypothesis, Line, LineMaterial, Material, Project,
                      ProjectConstraints, StopEntry, TailingsReport)
 from .parser.docx import parse_expert_hypotheses
@@ -385,6 +387,149 @@ def fx_rate() -> dict:
     return get_fx()
 
 
+# ---------- изображения схем фабрик (привязка в БД: смотреть и редактировать) ----------
+class FactoryImagePatch(BaseModel):
+    caption: str
+
+
+_MEDIA = {"png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg",
+          "webp": "image/webp", "bmp": "image/bmp", "pdf": "application/pdf"}
+
+
+def _find_case_file(filename: str):
+    import os as _os
+    from pathlib import Path as _P
+    from .config import DATA_CASE
+    want = unicodedata.normalize("NFC", filename)
+    for dirpath, _dirs, fnames in _os.walk(DATA_CASE):
+        for f in fnames:
+            if unicodedata.normalize("NFC", f) == want:
+                return _P(dirpath) / f
+    return None
+
+
+@router.get("/factories")
+def list_factories(store: Store = Depends(get_store)) -> list[dict]:
+    """Фабрики с их схемами из БД (сид из domain_pack + загруженные)."""
+    from .flowsheet import factories_available, get_flowsheet
+    return [{"factory": f,
+             "digitized": bool((get_flowsheet(f) or {}).get("nodes")),
+             "images": store.list_factory_images(f)}
+            for f in factories_available()]
+
+
+@router.post("/factories/{factory}/images")
+async def add_factory_image(factory: str, file: UploadFile,
+                            store: Store = Depends(get_store)) -> dict:
+    from .flowsheet import factories_available
+    if factory not in factories_available():
+        raise HTTPException(404, "фабрика не найдена")
+    import uuid as _uuid
+    from .config import STORAGE
+    data = await file.read()
+    name = unicodedata.normalize("NFC", file.filename or "схема.png")
+    ext = name.rsplit(".", 1)[-1].lower() if "." in name else "png"
+    if ext not in _MEDIA:
+        raise HTTPException(422, "поддерживаются png/jpg/webp/bmp/pdf")
+    dst = STORAGE / "factory_images"
+    dst.mkdir(parents=True, exist_ok=True)
+    path = dst / f"{_uuid.uuid4().hex[:10]}.{ext}"
+    path.write_bytes(data)
+    return store.add_factory_image(factory, name, caption="загружено пользователем",
+                                   path=str(path))
+
+
+@router.patch("/factory-images/{img_id}")
+def patch_factory_image(img_id: str, body: FactoryImagePatch,
+                        store: Store = Depends(get_store)) -> dict:
+    img = store.update_factory_image(img_id, body.caption)
+    if not img:
+        raise HTTPException(404, "изображение не найдено")
+    return img
+
+
+@router.delete("/factory-images/{img_id}")
+def delete_factory_image(img_id: str, store: Store = Depends(get_store)) -> dict:
+    if not store.delete_factory_image(img_id):
+        raise HTTPException(404, "изображение не найдено")
+    return {"ok": True}
+
+
+@router.get("/factory-images/{img_id}/file")
+def factory_image_file(img_id: str, store: Store = Depends(get_store)):
+    from fastapi.responses import FileResponse
+    img = store.get_factory_image(img_id)
+    if not img:
+        raise HTTPException(404, "изображение не найдено")
+    ext = img["filename"].rsplit(".", 1)[-1].lower()
+    media = _MEDIA.get(ext, "application/octet-stream")
+    if img.get("path"):
+        return FileResponse(img["path"], media_type=media)
+    p = _find_case_file(img["filename"])   # сид из data/case
+    if not p:
+        raise HTTPException(404, f"файл «{img['filename']}» не найден в data/case")
+    return FileResponse(p, media_type=media)
+
+
+# ---------- материалы проекта (файлы + Yandex OCR -> текст для генерации) ----------
+@router.post("/projects/{pid}/files")
+async def upload_project_file(pid: str, file: UploadFile,
+                              store: Store = Depends(get_store)) -> dict:
+    """Загрузка материала проекта: картинки распознаются Yandex OCR, PDF —
+    текстовым слоем; извлечённый текст учитывается при генерации гипотез.
+    Картинки, похожие на технологические схемы (kind=scheme), показываются
+    на экране диагностики рядом со схемой фабрики."""
+    from . import materials
+    import uuid as _uuid
+    from .config import STORAGE
+    _project_or_404(pid, store)
+    data = await file.read()
+    if len(data) > 30 * 1024 * 1024:
+        raise HTTPException(422, "файл больше 30 МБ")
+    name = unicodedata.normalize("NFC", file.filename or "материал")
+    kind, text, status = await run_in_threadpool(materials.extract_text, name, data)
+    ext = name.rsplit(".", 1)[-1].lower() if "." in name else "bin"
+    dst = STORAGE / "project_files"
+    dst.mkdir(parents=True, exist_ok=True)
+    path = dst / f"{_uuid.uuid4().hex[:10]}.{ext}"
+    path.write_bytes(data)
+    f = store.add_project_file(pid, name, kind, text, status, str(path))
+    return _project_file_public(f)
+
+
+def _project_file_public(f: dict) -> dict:
+    text = f.get("text") or ""
+    return {**{k: v for k, v in f.items() if k != "text"},
+            "chars": len(text), "preview": text[:400]}
+
+
+@router.get("/projects/{pid}/files")
+def list_project_files(pid: str, store: Store = Depends(get_store)) -> list[dict]:
+    _project_or_404(pid, store)
+    return [_project_file_public(f) for f in store.list_project_files(pid)]
+
+
+@router.delete("/projects/{pid}/files/{fid}")
+def delete_project_file(pid: str, fid: str, store: Store = Depends(get_store)) -> dict:
+    _project_or_404(pid, store)
+    f = store.get_project_file(fid)
+    if not f or f["project_id"] != pid:
+        raise HTTPException(404, "файл не найден")
+    store.delete_project_file(fid)
+    return {"ok": True}
+
+
+@router.get("/projects/{pid}/files/{fid}/file")
+def project_file_content(pid: str, fid: str, store: Store = Depends(get_store)):
+    from fastapi.responses import FileResponse
+    _project_or_404(pid, store)
+    f = store.get_project_file(fid)
+    if not f or f["project_id"] != pid or not f.get("path"):
+        raise HTTPException(404, "файл не найден")
+    ext = f["filename"].rsplit(".", 1)[-1].lower()
+    return FileResponse(f["path"], media_type=_MEDIA.get(ext, "application/octet-stream"))
+
+
 # ---------- гипотезы ----------
 class GenerateIn(BaseModel):
     weights: dict | None = None
@@ -432,6 +577,7 @@ def generate(pid: str, body: GenerateIn, store: Store = Depends(get_store),
         reagent_hints=zero_reagent_hints(factory, kb_index=kb),
         project_equipment=[e.model_dump() for e in project_equipment],
         material=project.material,
+        project_materials=materials_for_prompt(store.list_project_files(pid)),
         n_samples=2)  # best-of-2: параллельные сэмплы + смысловой дедуп
     verify_citations(hyps, kb)
     prior = expert_titles_for_plant(report.plant) + \

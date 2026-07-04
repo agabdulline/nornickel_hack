@@ -62,6 +62,14 @@ CREATE TABLE IF NOT EXISTS chat_messages (
   content TEXT, refs_json TEXT, charts_json TEXT, created_at TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_chat_project ON chat_messages(project_id);
+CREATE TABLE IF NOT EXISTS factory_images (
+  id TEXT PRIMARY KEY, factory TEXT, filename TEXT, caption TEXT,
+  path TEXT, created_at TEXT
+);
+CREATE TABLE IF NOT EXISTS project_files (
+  id TEXT PRIMARY KEY, project_id TEXT, filename TEXT, kind TEXT,
+  text TEXT, status TEXT, path TEXT, created_at TEXT
+);
 """
 
 # сид онтологии оборудования (раздел «Ограничения») для демо-линии кейса;
@@ -147,6 +155,7 @@ class Store:
         self._migrate_project_lines()
         self._seed_materials()
         self._seed_materials_catalog()
+        self._seed_factory_images()
         self._conn.commit()
 
     def _migrate_chats(self):
@@ -348,8 +357,14 @@ class Store:
         Возвращает False, если проекта не было."""
         with self._lock:
             cur = self._conn.execute("DELETE FROM projects WHERE id=?", (pid,))
+            for f in self.list_project_files(pid):
+                if f.get("path"):
+                    try:
+                        Path(f["path"]).unlink(missing_ok=True)
+                    except OSError:
+                        pass
             for table in ("reports", "hypotheses", "feedback", "roadmaps",
-                          "chat_messages", "chats"):
+                          "chat_messages", "chats", "project_files"):
                 self._conn.execute(f"DELETE FROM {table} WHERE project_id=?", (pid,))
             self._conn.commit()
             return cur.rowcount > 0
@@ -747,6 +762,115 @@ class Store:
             self._conn.execute("DELETE FROM chats WHERE project_id=?", (project_id,))
             self._conn.commit()
             return cur.rowcount
+
+
+    # ---------- изображения схем фабрик ----------
+    def _seed_factory_images(self):
+        """Идемпотентный сид: исходные схемы из domain_pack привязываются к
+        фабрикам в БД (файлы остаются в data/case, path пустой)."""
+        try:
+            from .domain import pack
+            flowsheets = pack().get("flowsheets") or {}
+        except Exception:
+            return
+        for factory, sheet in flowsheets.items():
+            for fn in sheet.get("source_files") or []:
+                row = self._conn.execute(
+                    "SELECT 1 FROM factory_images WHERE factory=? AND filename=?",
+                    (factory, fn)).fetchone()
+                if not row:
+                    self._conn.execute(
+                        "INSERT INTO factory_images VALUES (?,?,?,?,?,?)",
+                        (uuid.uuid4().hex[:10], factory, fn,
+                         "Схема из материалов кейса", "", _now()))
+
+    def list_factory_images(self, factory: str | None = None) -> list[dict]:
+        with self._lock:
+            if factory:
+                rows = self._conn.execute(
+                    "SELECT * FROM factory_images WHERE factory=? ORDER BY created_at, rowid",
+                    (factory,)).fetchall()
+            else:
+                rows = self._conn.execute(
+                    "SELECT * FROM factory_images ORDER BY factory, created_at, rowid").fetchall()
+            return [dict(r) for r in rows]
+
+    def get_factory_image(self, img_id: str) -> dict | None:
+        with self._lock:
+            row = self._conn.execute("SELECT * FROM factory_images WHERE id=?",
+                                     (img_id,)).fetchone()
+            return dict(row) if row else None
+
+    def add_factory_image(self, factory: str, filename: str, caption: str = "",
+                          path: str = "") -> dict:
+        img = {"id": uuid.uuid4().hex[:10], "factory": factory, "filename": filename,
+               "caption": caption, "path": path, "created_at": _now()}
+        with self._lock:
+            self._conn.execute("INSERT INTO factory_images VALUES (?,?,?,?,?,?)",
+                               (img["id"], factory, filename, caption, path, img["created_at"]))
+            self._conn.commit()
+        return img
+
+    def update_factory_image(self, img_id: str, caption: str) -> dict | None:
+        with self._lock:
+            self._conn.execute("UPDATE factory_images SET caption=? WHERE id=?",
+                               (caption, img_id))
+            self._conn.commit()
+        return self.get_factory_image(img_id)
+
+    def delete_factory_image(self, img_id: str) -> bool:
+        img = self.get_factory_image(img_id)
+        if not img:
+            return False
+        if img.get("path"):   # загруженный файл удаляем, файлы кейса не трогаем
+            try:
+                Path(img["path"]).unlink(missing_ok=True)
+            except OSError:
+                pass
+        with self._lock:
+            self._conn.execute("DELETE FROM factory_images WHERE id=?", (img_id,))
+            self._conn.commit()
+        return True
+
+    # ---------- материалы проекта (файлы с извлечённым текстом) ----------
+    def add_project_file(self, project_id: str, filename: str, kind: str,
+                         text: str, status: str, path: str) -> dict:
+        f = {"id": uuid.uuid4().hex[:10], "project_id": project_id,
+             "filename": filename, "kind": kind, "text": text,
+             "status": status, "path": path, "created_at": _now()}
+        with self._lock:
+            self._conn.execute("INSERT INTO project_files VALUES (?,?,?,?,?,?,?,?)",
+                               (f["id"], project_id, filename, kind, text,
+                                status, path, f["created_at"]))
+            self._conn.commit()
+        return f
+
+    def list_project_files(self, project_id: str) -> list[dict]:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT * FROM project_files WHERE project_id=? ORDER BY created_at, rowid",
+                (project_id,)).fetchall()
+            return [dict(r) for r in rows]
+
+    def get_project_file(self, fid: str) -> dict | None:
+        with self._lock:
+            row = self._conn.execute("SELECT * FROM project_files WHERE id=?",
+                                     (fid,)).fetchone()
+            return dict(row) if row else None
+
+    def delete_project_file(self, fid: str) -> bool:
+        f = self.get_project_file(fid)
+        if not f:
+            return False
+        if f.get("path"):
+            try:
+                Path(f["path"]).unlink(missing_ok=True)
+            except OSError:
+                pass
+        with self._lock:
+            self._conn.execute("DELETE FROM project_files WHERE id=?", (fid,))
+            self._conn.commit()
+        return True
 
     # ---------- дорожная карта ----------
     def save_roadmap(self, project_id: str, items: list[dict]):

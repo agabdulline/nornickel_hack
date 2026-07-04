@@ -418,6 +418,16 @@ def list_factories(store: Store = Depends(get_store)) -> list[dict]:
             for f in factories_available()]
 
 
+@router.get("/factories/{factory}/flowsheet")
+def factory_flowsheet(factory: str) -> dict:
+    """Оцифрованная схема фабрики — текстовое представление в карточке линии."""
+    from .flowsheet import get_flowsheet
+    fs = get_flowsheet(factory)
+    if not fs or not fs.get("nodes"):
+        raise HTTPException(404, "схема этой фабрики не оцифрована")
+    return {"factory": factory, "flowsheet": fs}
+
+
 @router.post("/factories/{factory}/images")
 async def add_factory_image(factory: str, file: UploadFile,
                             store: Store = Depends(get_store)) -> dict:

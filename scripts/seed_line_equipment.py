@@ -90,7 +90,8 @@ def main():
     lines = http("GET", args.base, "/lines")
     print(f"линий: {len(lines)}")
 
-    # производственные линии НОФ — полный регламентный список
+    # производственные линии фабрик кейса (НОФ/ТОФ/КГМК) — полный список из
+    # «Типичного списка оборудования 1-3» (он в кейсе общий, не только для НОФ)
     ontology = pack().get("equipment", [])
     plant_rows = []
     for e in ontology:
@@ -98,7 +99,9 @@ def main():
             plant_rows.append({"name": e["name"], "position": pos,
                                "category": e.get("type", "")})
     for line in lines:
-        if line.get("kind") == "производственная линия" and "НОФ" in line["name"]:
+        name_up = line["name"].upper()
+        if line.get("kind") == "производственная линия" and \
+                any(f in name_up for f in ("НОФ", "ТОФ", "КГМК")):
             sync_line(args.base, line, plant_rows)
 
     # внешняя лаборатория-партнёр — базовый набор

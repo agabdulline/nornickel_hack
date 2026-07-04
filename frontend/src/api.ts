@@ -176,6 +176,9 @@ export const api = {
 
   // ---------- схемы фабрик (БД) и материалы проекта ----------
   factories: () => j<FactoryInfo[]>(fetch('/api/factories')),
+  factoryFlowsheet: (factory: string) =>
+    j<{ factory: string; flowsheet: FlowsheetData }>(
+      fetch(`/api/factories/${encodeURIComponent(factory)}/flowsheet`)),
   factoryImageUpload: (factory: string, file: File) => {
     const fd = new FormData()
     fd.append('file', file)

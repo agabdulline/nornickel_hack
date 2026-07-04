@@ -7,6 +7,7 @@ import {
   toDraftEquipment, toDraftMaterial,
 } from '../components/lines'
 import FactoryImages from '../components/FactoryImages'
+import FlowsheetText from '../components/FlowsheetText'
 
 const KIND_OPTIONS: LineKind[] = ['производственная линия', 'лаборатория']
 const OWNERSHIP_OPTIONS: LineOwnership[] = ['в штате компании', 'внешний подрядчик/партнёр']
@@ -182,6 +183,9 @@ function LinesSection() {
                     </>
                   ) : (
                     <>
+                      {line.kind === 'производственная линия' && (
+                        <FlowsheetText lineName={line.name} />
+                      )}
                       <div>
                         <SectionLabel>Оборудование объекта</SectionLabel>
                         {equipment.length === 0 && (

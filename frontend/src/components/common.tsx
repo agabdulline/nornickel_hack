@@ -48,14 +48,7 @@ export function Icon({ name, className = 'w-4 h-4', strokeWidth = 2 }:
 export function Logo({ compact = false }: { compact?: boolean }) {
   return (
     <span className="inline-flex items-center gap-2.5 select-none">
-      <span className="grid place-items-center w-8 h-8 rounded-[10px] shrink-0"
-        style={{ background: 'linear-gradient(135deg, var(--c-brand-strong), var(--c-azure))' }}>
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden>
-          <path d="M12 2 21 7v10l-9 5-9-5V7l9-5z" stroke="#fff" strokeWidth="1.6"
-            strokeLinejoin="round" opacity=".55" />
-          <path d="M12 7v10M8 9.5l8 5M16 9.5l-8 5" stroke="#fff" strokeWidth="1.6" strokeLinecap="round" />
-        </svg>
-      </span>
+      <img src="/logo.png" alt="Фабрика гипотез" className="h-8 w-auto shrink-0" />
       {!compact && (
         <span className="font-extrabold tracking-tight text-[15px] leading-none"
           style={{ color: 'var(--c-brand-strong)' }}>

@@ -45,6 +45,7 @@ function FlowsheetGraph({ factory, fs, highlight }: {
   factory: string | null; fs: FlowsheetData; highlight: Set<string>
 }) {
   const [showSources, setShowSources] = useState(false)
+  const [collapsed, setCollapsed] = useState(false)
   const groups = TYPE_ORDER
     .map(t => ({ type: t, nodes: fs.nodes.filter(n => n.type === t) }))
     .filter(g => g.nodes.length > 0)
@@ -65,47 +66,59 @@ function FlowsheetGraph({ factory, fs, highlight }: {
     <Panel
       title={`Схема фабрики: ${factory}`}
       subtitle="по оцифрованному регламенту; подсвечены переделы сработавших диагнозов"
-      bodyClass="p-3 overflow-x-auto"
-      actions={sources.length > 0 && factory ? (
-        <button className="btn btn-sm" title="Показать изображения, с которых оцифрована схема"
-          onClick={() => setShowSources(true)}>
-          <Icon name="search" className="w-4 h-4" />
-          Исходные схемы <span className="num">({sources.length})</span>
-        </button>
-      ) : undefined}>
-      <div className="flex items-stretch gap-1 min-w-max pb-1">
-        {groups.map((g, gi) => (
-          <div key={g.type} className="flex items-center gap-1">
-            {gi > 0 && (
-              <span className="px-0.5 shrink-0" style={{ color: 'var(--c-faint)' }}>
-                <Icon name="arrowRight" className="w-3.5 h-3.5 opacity-30" />
-              </span>
-            )}
-            <div className="card-2 p-1.5">
-              <div className="text-[10px] uppercase mb-1" style={{ color: 'var(--c-faint)' }}>
-                {TYPE_LABEL[g.type]}
-              </div>
-              <div className="flex gap-1">
-                {g.nodes.map(n => (
-                  <div key={n.id} title={regime(n)}
-                    className={`rounded-md px-2 py-1 text-xs max-w-44 border ${highlight.has(n.id)
-                      ? 'bg-brand-tint border-brand font-semibold'
-                      : 'bg-surface border-line'}`}>
-                    <div className="truncate">{n.name}</div>
-                    {regime(n) && (
-                      <div className="text-[10px] truncate num" style={{ color: 'var(--c-muted)' }}>
-                        {regime(n)}
-                      </div>
-                    )}
-                    {tailFrom.has(n.id) &&
-                      <div className="text-[10px] text-danger">▼ хвосты</div>}
-                  </div>
-                ))}
+      bodyClass={collapsed ? 'p-0' : 'p-3'}
+      actions={
+        <div className="flex items-center gap-1.5">
+          {sources.length > 0 && factory && (
+            <button className="btn btn-sm" title="Показать изображения, с которых оцифрована схема"
+              onClick={() => setShowSources(true)}>
+              <Icon name="search" className="w-4 h-4" />
+              <span className="hidden sm:inline">Исходные схемы </span>
+              <span className="num">({sources.length})</span>
+            </button>
+          )}
+          <button className="btn btn-sm" onClick={() => setCollapsed(v => !v)}
+            aria-expanded={!collapsed} title={collapsed ? 'Развернуть схему' : 'Свернуть схему'}>
+            <Icon name="arrowRight"
+              className={`w-4 h-4 transition-transform duration-200 ${collapsed ? '' : 'rotate-90'}`} />
+            {collapsed ? 'Развернуть' : 'Свернуть'}
+          </button>
+        </div>
+      }>
+      {!collapsed && (
+        <div className="flex flex-col items-center gap-1.5 animate-in">
+          {groups.map((g, gi) => (
+            <div key={g.type} className="flex flex-col items-center gap-1.5 w-full">
+              {gi > 0 && (
+                <Icon name="arrowRight" className="w-4 h-4 rotate-90 opacity-25 shrink-0 text-faint" />
+              )}
+              <div className="card-2 p-2.5 w-full max-w-3xl">
+                <div className="text-[10px] uppercase mb-1.5 text-center tracking-wide"
+                  style={{ color: 'var(--c-faint)' }}>
+                  {TYPE_LABEL[g.type]}
+                </div>
+                <div className="flex flex-wrap justify-center gap-1.5">
+                  {g.nodes.map(n => (
+                    <div key={n.id} title={regime(n)}
+                      className={`rounded-md px-2 py-1 text-xs w-40 border ${highlight.has(n.id)
+                        ? 'bg-brand-tint border-brand font-semibold'
+                        : 'bg-surface border-line'}`}>
+                      <div className="truncate">{n.name}</div>
+                      {regime(n) && (
+                        <div className="text-[10px] truncate num" style={{ color: 'var(--c-muted)' }}>
+                          {regime(n)}
+                        </div>
+                      )}
+                      {tailFrom.has(n.id) &&
+                        <div className="text-[10px] text-danger">▼ хвосты</div>}
+                    </div>
+                  ))}
+                </div>
               </div>
             </div>
-          </div>
-        ))}
-      </div>
+          ))}
+        </div>
+      )}
       {showSources && factory && (
         <FlowsheetSources factory={factory} files={sources}
           onClose={() => setShowSources(false)} />

@@ -12,7 +12,7 @@ import Hypotheses from './screens/Hypotheses'
 import ExportScreen from './screens/Export'
 import KB from './screens/KB'
 import Projects from './screens/Projects'
-import { EmptyBox, Icon, Logo, Modal, SectionLabel, Stepper, ThemeToggle } from './components/common'
+import { EmptyBox, Icon, Logo, Modal, SectionLabel, Spinner, Stepper, ThemeToggle } from './components/common'
 import { SiteHeader } from './components/SiteHeader'
 import { ProjectCard } from './components/ProjectCard'
 
@@ -142,6 +142,7 @@ function ProjectLayout() {
 
 function Home() {
   const [projects, setProjects] = useState<Project[]>([])
+  const [loadingProjects, setLoadingProjects] = useState(true)
   const [name, setName] = useState('')
   const [line, setLine] = useState<Line | null>(null)
   const [goal, setGoal] = useState('Снижение потерь Ni и Cu в отвальных хвостах')
@@ -158,6 +159,7 @@ function Home() {
       const full = await Promise.all(list.map(p => api.project(p.id).catch(() => p)))
       setProjects(full)
     } catch (e) { setErr(String(e)) }
+    finally { setLoadingProjects(false) }
   }
   useEffect(() => { load() }, [])
 
@@ -256,7 +258,9 @@ function Home() {
               Просмотреть все <Icon name="arrowRight" className="w-3.5 h-3.5" />
             </Link>
           </div>
-          {projects.length === 0
+          {loadingProjects
+            ? <Spinner label="Загружаю проекты…" />
+            : projects.length === 0
             ? <EmptyBox text="Пока нет проектов" hint="Создайте первый проект выше" icon="doc" />
             : (
               <div className="grid sm:grid-cols-2 gap-3 stagger">

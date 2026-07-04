@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type CSSProperties } from 'react'
 import { useParams } from 'react-router-dom'
-import { api, fmt } from '../api'
+import { api, fmt, fxLabel, fxReady } from '../api'
 import type { Hypothesis, RoadmapItem } from '../types'
 import { ErrorBox, Icon, PageHeader, Panel, SectionLabel, Segmented, Spinner } from '../components/common'
 
@@ -12,9 +12,14 @@ export default function ExportScreen() {
 
   useEffect(() => { api.hypotheses(pid).then(setHyps).catch(e => setErr(String(e))) }, [pid])
 
+  // после загрузки курса ЦБ перерисовываем суммы в ₽
+  const [, setFxTick] = useState(0)
+  useEffect(() => { fxReady.then(() => setFxTick(t => t + 1)) }, [])
+
   return (
     <div className="space-y-4 animate-in">
       <PageHeader title="Отчёт и экспорт"
+        subtitle={`Эффект в ₽ по курсу ${fxLabel()}`}
         actions={<>
           <Segmented
             options={[
@@ -57,8 +62,8 @@ function ReportTab({ hyps }: { hyps: Hypothesis[] }) {
             <thead>
               <tr>
                 <th>№</th><th>Гипотеза</th><th>Передел</th>
-                <th className="text-right">т/год</th><th className="text-right">$/год</th>
-                <th className="text-right">score</th>
+                <th className="text-right">т/год</th><th className="text-right">₽/год</th>
+                <th className="text-right">$/год</th><th className="text-right">score</th>
               </tr>
             </thead>
             <tbody>
@@ -68,7 +73,8 @@ function ReportTab({ hyps }: { hyps: Hypothesis[] }) {
                   <td>{h.title}</td>
                   <td className="text-muted">{h.process_area}</td>
                   <td className="num text-right">{fmt.t(h.effect.tonnes_expected, 0)}</td>
-                  <td className="num text-right">{fmt.usd(h.effect.money_usd)}</td>
+                  <td className="num text-right">{fmt.rub(h.effect.money_usd)}</td>
+                  <td className="num text-right text-faint">{fmt.usd(h.effect.money_usd)}</td>
                   <td className="num text-right font-semibold" style={{ color: 'var(--c-brand-strong)' }}>
                     {h.score.toFixed(3)}
                   </td>
@@ -101,7 +107,8 @@ function ReportTab({ hyps }: { hyps: Hypothesis[] }) {
                     <div key={h.id} className={cls} style={st}>
                       <div className="font-medium">{h.title}</div>
                       <div className="num text-muted mt-1">
-                        {fmt.t(h.effect.tonnes_expected, 0)} т · {fmt.usd(h.effect.money_usd)}
+                        {fmt.t(h.effect.tonnes_expected, 0)} т · {fmt.rub(h.effect.money_usd)}
+                        <span className="text-faint"> · {fmt.usd(h.effect.money_usd)}</span>
                       </div>
                     </div>
                   )

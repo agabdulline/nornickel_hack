@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { api, fmt } from '../api'
+import { api, fmt, fxLabel, fxReady } from '../api'
 import type { Hypothesis } from '../types'
 import {
   Badge, CapexBadge, ChunkModal, EmptyBox, ErrorBox, Icon, Meter, PageHeader, Panel,
@@ -9,7 +9,47 @@ import {
 
 const AREAS = ['дробление', 'измельчение', 'классификация', 'флотация', 'реагентика', 'вспомогательные']
 const W_LABELS: Record<string, string> = {
-  money: 'Экономика', capex: 'Дешевизна внедрения', risk: 'Низкий риск', novelty: 'Новизна',
+  money: 'Экономический эффект', capex: 'Стоимость внедрения', risk: 'Риск', novelty: 'Новизна',
+}
+const W_HINTS: Record<string, string> = {
+  money: 'выше вес — выше в списке гипотезы с большим эффектом, ₽/год',
+  capex: 'выше вес — выше в списке дешёвые во внедрении',
+  risk: 'выше вес — выше в списке менее рискованные',
+  novelty: 'выше вес — выше в списке новые для компании',
+}
+
+// диагностические правила (backend/app/diagnostics.py). diagnosis_rule гипотезы —
+// только R1/R2/R3 («активные» причины); R4 (не предложено) и R5 (аномалии) тегами не бывают.
+const RULE_SHORT: Record<string, string> = {
+  R1: 'Недоизмельчение', R2: 'Переизмельчение', R3: 'Недоработка флотации',
+}
+// тултип — только факт диагноза, без предписания (оно у каждой гипотезы своё)
+const RULE_TITLES: Record<string, string> = {
+  R1: 'R1 · Недоизмельчение: извлекаемый металл заперт в крупных сростках (классы +125, −125+71) — флотация его не раскрывает.',
+  R2: 'R2 · Переизмельчение: готовый минерал перемолот в шламы −10 мкм — пузырёк его не удерживает.',
+  R3: 'R3 · Недоработка флотации: минерал раскрыт в средних классах, но не выловлен.',
+}
+
+const _LMH: Record<string, number> = { low: 0, med: 0.5, medium: 0.5, high: 1 }
+const _LMH_RU: Record<string, string> = {
+  low: 'низкая', med: 'средняя', medium: 'средняя', high: 'высокая',
+}
+const _plural = (n: number, one: string, few: string, many: string) =>
+  n % 10 === 1 && n % 100 !== 11 ? one
+    : n % 10 >= 2 && n % 10 <= 4 && (n % 100 < 12 || n % 100 > 14) ? few : many
+
+/** Нормы критериев — зеркалят формулу бэкенда (rank.py), не LLM:
+ *  риск = 0.5·(число рисков/4) + 0.5·сложность; capex по категории. */
+function riskNorm(h: Hypothesis): number {
+  const compl = _LMH[String(h.feasibility?.complexity ?? 'med').toLowerCase()] ?? 0.5
+  return 0.5 * Math.min(h.risks.length / 4, 1) + 0.5 * compl
+}
+function capexNorm(h: Hypothesis): number {
+  return _LMH[String(h.feasibility?.capex ?? 'med').toLowerCase()] ?? 0.5
+}
+function riskLevel(h: Hypothesis): ['низкий' | 'средний' | 'высокий', 'ok' | 'warn' | 'danger'] {
+  const v = riskNorm(h)
+  return v < 0.3 ? ['низкий', 'ok'] : v < 0.65 ? ['средний', 'warn'] : ['высокий', 'danger']
 }
 
 export default function Hypotheses() {
@@ -29,6 +69,26 @@ export default function Hypotheses() {
   useEffect(() => {
     api.hypotheses(pid).then(setHyps).catch(e => setErr(String(e)))
   }, [pid])
+
+  // после загрузки курса ЦБ перерисовываем суммы в ₽
+  const [, setFxTick] = useState(0)
+  useEffect(() => { fxReady.then(() => setFxTick(t => t + 1)) }, [])
+
+  // живое пере-ранжирование: слайдеры весов применяются к текущему списку
+  // сразу (debounce 450 мс), без регенерации через LLM
+  const firstRank = useRef(true)
+  const [reranking, setReranking] = useState(false)
+  useEffect(() => {
+    if (firstRank.current) { firstRank.current = false; return }
+    const t = setTimeout(() => {
+      setReranking(true)
+      api.rerank(pid, weights)
+        .then(setHyps)
+        .catch(e => setErr(String(e)))
+        .finally(() => setReranking(false))
+    }, 450)
+    return () => clearTimeout(t)
+  }, [weights, pid])
 
   const generate = async () => {
     setBusy(true); setErr('')
@@ -51,6 +111,11 @@ export default function Hypotheses() {
     passesBaseFilters.filter(h => showMissingEquipment || !missingEquipment(h)),
     [passesBaseFilters, showMissingEquipment])
   const hiddenForEquipment = passesBaseFilters.length - visible.length
+  // границы нормировки эффекта — по всему списку, как в rank.py
+  const [moneyLo, moneyHi] = useMemo(() => {
+    const ms = (hyps ?? []).map(h => h.effect.money_usd)
+    return ms.length ? [Math.min(...ms), Math.max(...ms)] : [0, 0]
+  }, [hyps])
 
   const feedback = async (h: Hypothesis, action: 'accept' | 'reject') => {
     let reason = ''
@@ -67,7 +132,8 @@ export default function Hypotheses() {
 
   return (
     <div className="flex flex-col animate-in" style={{ height: 'calc(100vh - 85px)' }}>
-      <PageHeader title="Гипотезы" subtitle="Ранжирование по вашим весам"
+      <PageHeader title="Гипотезы"
+        subtitle={`Ранжирование по вашим весам · эффект в ₽ по курсу ${fxLabel()}`}
         actions={
           <button className="btn btn-primary" onClick={() => nav(`/p/${pid}/export`)}>
             К отчёту <Icon name="arrowRight" />
@@ -77,9 +143,11 @@ export default function Hypotheses() {
       <div className="flex gap-4 flex-1 min-h-0 mt-4">
         {/* левая панель — статична, скроллится только при нехватке высоты */}
         <aside className="w-64 shrink-0 space-y-4 overflow-y-auto scroll-fade h-full pr-1 pt-1 pb-2">
-          <Panel title="Веса ранжирования" bodyClass="p-4 space-y-3.5">
+          <Panel title="Приоритеты ранжирования"
+            subtitle={reranking ? 'пересортировка…' : 'действуют сразу, без регенерации'}
+            bodyClass="p-4 space-y-3.5">
             {Object.entries(weights).map(([k, v]) => (
-              <label key={k} className="block">
+              <label key={k} className="block" title={W_HINTS[k]}>
                 <span className="field-label">{W_LABELS[k]}</span>
                 <span className="num float-right text-muted">{v.toFixed(2)}</span>
                 <input type="range" min={0} max={1} step={0.05} value={v}
@@ -87,6 +155,10 @@ export default function Hypotheses() {
                   onChange={e => setWeights(w => ({ ...w, [k]: Number(e.target.value) }))} />
               </label>
             ))}
+            <div className="text-xs pt-1" style={{ color: 'var(--c-faint)' }}>
+              Вес — важность критерия в сортировке: дешёвые, менее рисковые
+              и новые поднимаются выше.
+            </div>
           </Panel>
 
           <Panel title="Переделы" bodyClass="p-4 space-y-2">
@@ -134,6 +206,7 @@ export default function Hypotheses() {
           <div className="space-y-3 stagger">
             {visible.map((h, i) => (
               <HypCard key={h.id} h={h} rank={i + 1} onFeedback={feedback}
+                weights={weights} moneyLo={moneyLo} moneyHi={moneyHi}
                 onChunk={(id, quote) => setChunk({ id, quote })} />
             ))}
           </div>
@@ -156,15 +229,81 @@ export default function Hypotheses() {
   )
 }
 
-function HypCard({ h, rank, onFeedback, onChunk }: {
+/** Разбор оценки: те же числа, что в формуле ранжирования (не LLM). */
+function ScoreBreakdown({ h, weights, lo, hi }: {
+  h: Hypothesis; weights: Record<string, number>; lo: number; hi: number
+}) {
+  const moneyN = hi > lo ? (h.effect.money_usd - lo) / (hi - lo) : 0.5
+  const novelty = h.novelty?.score ?? 1
+  const [riskLbl] = riskLevel(h)
+  const rows = [
+    { k: 'money', val: moneyN,
+      note: `${fmt.rub(h.effect.money_usd)}/год (${fmt.usd(h.effect.money_usd)}) — `
+        + `${Math.round(moneyN * 100)}% от максимума в списке` },
+    { k: 'capex', val: 1 - capexNorm(h),
+      note: { 0: 'внедрение от 100 млн ₽ — дорогое', 0.5: 'внедрение 10–100 млн ₽ — средней стоимости',
+        1: 'внедрение до 10 млн ₽ — дешёвое' }[1 - capexNorm(h)] ?? '' },
+    { k: 'risk', val: 1 - riskNorm(h),
+      note: (() => {
+        const compl = String(h.feasibility?.complexity ?? 'med').toLowerCase()
+        const interv = compl === 'low' ? 'вмешательство простое и обратимое'
+          : compl === 'high' ? 'сложное вмешательство в процесс'
+            : 'вмешательство средней сложности'
+        return `${interv} → риск внедрения ${riskLbl} `
+          + `(${h.risks.length} ${_plural(h.risks.length,
+            'технический риск', 'технических риска', 'технических рисков')})`
+      })() },
+    { k: 'novelty', val: novelty,
+      note: novelty >= 0.99 ? 'совпадений с наработками нет' : 'есть наработки — балл снижен' },
+  ]
+  const penalized = h.rationale.length > 0 && !h.rationale.some(c => c.verified)
+  const total = rows.reduce((s, r) => s + (weights[r.k] ?? 0) * r.val, 0) * (penalized ? 0.75 : 1)
+  return (
+    <div>
+      <SectionLabel>Разбор оценки — почему такой ранг</SectionLabel>
+      <div className="space-y-1.5">
+        {rows.map(r => (
+          <div key={r.k} className="flex items-center gap-2.5 text-xs" title={r.note}>
+            <span className="w-40 shrink-0 text-muted truncate">{W_LABELS[r.k]}</span>
+            <Meter value={r.val} className="w-28 shrink-0" />
+            <span className="num w-28 text-right shrink-0">
+              {r.val.toFixed(2)} × вес {(weights[r.k] ?? 0).toFixed(2)}
+            </span>
+            <span className="num w-16 text-right font-semibold shrink-0">
+              = {((weights[r.k] ?? 0) * r.val).toFixed(3)}
+            </span>
+            <span className="text-faint truncate flex-1 min-w-0">{r.note}</span>
+          </div>
+        ))}
+        <div className="flex items-center gap-2.5 text-xs pt-1 border-t border-line">
+          <span className="w-40 shrink-0 text-muted">
+            {penalized ? 'штраф ×0.75 — нет подтверждённых цитат' : 'итог'}
+          </span>
+          <span className="num font-bold">score ≈ {total.toFixed(3)}</span>
+        </div>
+      </div>
+      <div className="text-xs mt-1.5" style={{ color: 'var(--c-faint)' }}>
+        Оценка — детерминированная формула (вклад = значение × вес, эффект
+        нормирован по текущему списку), а не мнение модели.
+      </div>
+    </div>
+  )
+}
+
+function HypCard({ h, rank, onFeedback, onChunk, weights, moneyLo, moneyHi }: {
   h: Hypothesis; rank: number
   onFeedback: (h: Hypothesis, a: 'accept' | 'reject') => void
   onChunk: (id: string, quote: string) => void
+  weights: Record<string, number>; moneyLo: number; moneyHi: number
 }) {
   const [open, setOpen] = useState(rank === 1)
-  const expertMatch = (h.novelty?.prior_matches?.length ?? 0) > 0
   const missing = h.equipment.filter(e => !e.present_on_plant)
   const present = h.equipment.filter(e => e.present_on_plant)
+  const [riskLbl, riskTone] = riskLevel(h)
+  // новизна: совпадений нет — новое для компании; есть — компания уже имеет
+  // наработки по теме (гипотезы экспертов института или принятые ранее)
+  const matches = (h.novelty?.prior_matches ?? []).filter(m => m !== h.title)
+  const hasPrior = matches.length > 0
 
   const accent = h.status === 'accepted'
     ? { borderLeft: '4px solid var(--c-ok)', background: 'color-mix(in srgb, var(--c-ok) 6%, var(--c-surface))' }
@@ -182,7 +321,16 @@ function HypCard({ h, rank, onFeedback, onChunk }: {
             <Badge tone="brand">{h.process_area}</Badge>
             <Badge>{h.element}</Badge>
             <CapexBadge capex={h.feasibility?.capex} />
-            <Badge>риски: <span className="num">{h.risks.length}</span></Badge>
+            <Badge tone={riskTone} title={h.risks.length ? `Риски: ${h.risks.join('; ')}` : 'Рисков не указано'}>
+              риск {riskLbl}
+            </Badge>
+            {hasPrior ? (
+              <Badge title={`Совпадает с наработками: ${matches.join('; ')}`}>
+                есть наработки в компании
+              </Badge>
+            ) : (
+              <Badge tone="brand">новое для компании</Badge>
+            )}
             {missing.length > 0 && (
               <Badge tone="warn">
                 <Icon name="alert" className="w-3 h-3 shrink-0" />требует нового оборудования (CAPEX)
@@ -196,9 +344,12 @@ function HypCard({ h, rank, onFeedback, onChunk }: {
                   `, позиции ${present.flatMap(e => e.positions).join(', ')}`}
               </Badge>
             )}
-            {h.diagnosis_rule && <Badge><span className="num">[{h.diagnosis_rule}]</span></Badge>}
-            {expertMatch && (
-              <Badge tone="ok"><Icon name="check" className="w-3 h-3" />Совпадает с гипотезой экспертов</Badge>
+            {h.diagnosis_rule && (
+              <Badge title={RULE_TITLES[h.diagnosis_rule]
+                ?? `Диагноз ${h.diagnosis_rule} — из него выросла гипотеза`}>
+                <span className="num">[{h.diagnosis_rule}]</span>
+                {RULE_SHORT[h.diagnosis_rule] ? ` ${RULE_SHORT[h.diagnosis_rule]}` : ' диагноз'}
+              </Badge>
             )}
             {h.uncertain && <Badge tone="warn">оценка на непроверенных данных</Badge>}
             {h.status === 'accepted' && <Badge tone="solid">принята</Badge>}
@@ -207,7 +358,8 @@ function HypCard({ h, rank, onFeedback, onChunk }: {
         </div>
         <div className="text-right shrink-0">
           <div className="num font-semibold">до {fmt.t(h.effect.tonnes_expected, 0)} т {h.element}/год</div>
-          <div className="num text-sm text-muted">≈ {fmt.usd(h.effect.money_usd)}</div>
+          <div className="num text-sm text-muted">≈ {fmt.rub(h.effect.money_usd)}/год</div>
+          <div className="num text-xs" style={{ color: 'var(--c-faint)' }}>{fmt.usd(h.effect.money_usd)}/год</div>
           <Meter value={h.score} title={`score ${h.score.toFixed(3)}`} className="w-28 ml-auto mt-1.5" />
         </div>
       </div>
@@ -215,6 +367,8 @@ function HypCard({ h, rank, onFeedback, onChunk }: {
       {open && (
         <div className="px-3 pb-3 pt-3 border-t border-line space-y-3">
           <p className="text-sm leading-relaxed">{h.mechanism}</p>
+
+          <ScoreBreakdown h={h} weights={weights} lo={moneyLo} hi={moneyHi} />
 
           {h.rationale.length > 0 && (
             <div className="flex flex-wrap gap-1.5">

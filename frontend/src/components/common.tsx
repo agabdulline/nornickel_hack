@@ -248,12 +248,20 @@ export function EmptyBox({ text, hint, icon = 'doc' }: { text: string; hint?: st
 
 export function CapexBadge({ capex }: { capex?: unknown }) {
   const v = String(capex ?? 'med').toLowerCase()
+  // порядок затрат на внедрение по категории CAPEX (инженерная оценка для передела)
   const map: Record<string, [string, Tone]> = {
-    low: ['CAPEX низкий', 'ok'], med: ['CAPEX средний', 'default'],
-    medium: ['CAPEX средний', 'default'], high: ['CAPEX высокий', 'warn'],
+    low: ['внедрение до 10 млн ₽', 'ok'],
+    med: ['внедрение 10–100 млн ₽', 'default'],
+    medium: ['внедрение 10–100 млн ₽', 'default'],
+    high: ['внедрение от 100 млн ₽', 'warn'],
   }
   const [label, tone] = map[v] ?? map.med
-  return <Badge tone={tone}>{label}</Badge>
+  return (
+    <Badge tone={tone}
+      title="Порядок затрат на внедрение — по категории CAPEX (низкий/средний/высокий), типовые диапазоны для обогатительного передела">
+      {label}
+    </Badge>
+  )
 }
 
 /* -------------------------------- Модалка -------------------------------- */

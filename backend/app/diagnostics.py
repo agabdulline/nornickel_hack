@@ -297,9 +297,10 @@ def _r5(report: TailingsReport, res: DiagnosticsResult):
             sev = "error" if c.tonnes is None else "info"
             res.issues.append(DataIssue(
                 severity=sev, rule="R5b", cell=c.key,
-                message=(f"Ячейка {c.key}: " +
-                         ("не восстановлена — исключена из диагностики" if c.tonnes is None else
-                          f"значение восстановлено ({c.provenance}) — проверьте вручную"))))
+                message=(f"Ячейка {c.key}: " + (
+                    "не заполнена — исключена из диагностики" if c.tonnes is None else
+                    "значение введено вручную" if c.provenance == "manual" else
+                    "значение подставлено автоматически — проверьте и впишите вручную"))))
 
         # (в) неожиданная форма забирает >50% потерь класса
         if ct and ct > 0:

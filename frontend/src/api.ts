@@ -126,6 +126,11 @@ export const api = {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
     })),
+  rerank: (pid: string, weights: Record<string, number>) =>
+    j<Hypothesis[]>(fetch(`/api/projects/${pid}/hypotheses/rerank`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ weights }),
+    })),
   hypotheses: (pid: string) => j<Hypothesis[]>(fetch(`/api/projects/${pid}/hypotheses`)),
   feedback: (hid: string, action: 'accept' | 'reject', reason = '') =>
     j<{ status: string; stoplist: string[] }>(fetch(`/api/hypotheses/${hid}/feedback`, {
@@ -187,11 +192,53 @@ export const api = {
     }>(fetch(`/api/kb/chunk/${encodeURIComponent(chunkId)}`)),
 }
 
+/** Курс отображения денежного эффекта. Внутри данные в USD (биржевые цены
+ *  металлов), в UI/отчётах — рубли. Актуальный курс ЦБ приходит с /api/fx;
+ *  до ответа (или офлайн) — запасной курс, синхронный с rub_per_usd
+ *  в domain_packs/flotation.yaml. */
+export const fx = { rate: 90, date: null as string | null, source: 'default' }
+
+/** Промис загрузки курса: экраны с деньгами делают re-render по завершении. */
+export const fxReady: Promise<void> = (async () => {
+  try {
+    const r = await j<{ rub_per_usd: number; date: string | null; source: string }>(
+      fetch('/api/fx'))
+    fx.rate = r.rub_per_usd; fx.date = r.date; fx.source = r.source
+  } catch { /* офлайн — остаёмся на запасном курсе */ }
+})()
+
+/** Подпись курса: «79,4 ₽/$ · ЦБ РФ на 04.07.2026» или «90 ₽/$ · курс по умолчанию». */
+export const fxLabel = () => {
+  const rate = fx.rate.toLocaleString('ru-RU', { maximumFractionDigits: 2 })
+  if (fx.source === 'cbr' && fx.date) {
+    const [y, m, d] = fx.date.split('-')
+    return `${rate} ₽/$ · ЦБ РФ на ${d}.${m}.${y}`
+  }
+  return `${rate} ₽/$ · курс по умолчанию`
+}
+
 export const fmt = {
   t: (v: number | null | undefined, digits = 1) =>
     v == null ? '—' : v.toLocaleString('ru-RU', { maximumFractionDigits: digits }),
   pct: (v: number | null | undefined, digits = 1) =>
     v == null ? '—' : `${v.toLocaleString('ru-RU', { maximumFractionDigits: digits })}%`,
-  usd: (v: number | null | undefined) =>
-    v == null ? '—' : `$${Math.round(v).toLocaleString('ru-RU')}`,
+  /** Эффект в ₽ из внутреннего USD-значения: конвертация по курсу, млн/млрд. */
+  rub: (usd: number | null | undefined) => {
+    if (usd == null) return '—'
+    const r = usd * fx.rate
+    if (Math.abs(r) >= 1e9)
+      return `${(r / 1e9).toLocaleString('ru-RU', { maximumFractionDigits: 2 })} млрд ₽`
+    if (Math.abs(r) >= 1e6)
+      return `${Math.round(r / 1e6).toLocaleString('ru-RU')} млн ₽`
+    return `${Math.round(r).toLocaleString('ru-RU')} ₽`
+  },
+  /** Исходная сумма в долларах (биржевые цены металлов, USD/т). */
+  usd: (v: number | null | undefined) => {
+    if (v == null) return '—'
+    const a = Math.abs(v)
+    if (a >= 1e9) return `$${(v / 1e9).toLocaleString('ru-RU', { maximumFractionDigits: 2 })} млрд`
+    if (a >= 1e6) return `$${(v / 1e6).toLocaleString('ru-RU', { maximumFractionDigits: 1 })} млн`
+    if (a >= 1e3) return `$${Math.round(v / 1e3).toLocaleString('ru-RU')} тыс`
+    return `$${Math.round(v).toLocaleString('ru-RU')}`
+  },
 }

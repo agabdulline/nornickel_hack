@@ -362,6 +362,14 @@ def flowsheet_image(factory: str, idx: int):
     raise HTTPException(404, f"файл схемы «{files[idx]}» не найден в data/case")
 
 
+# ---------- курс валют ----------
+@router.get("/fx")
+def fx_rate() -> dict:
+    """Курс отображения эффекта в ₽: ЦБ РФ с кэшем, офлайн — дефолт пакета."""
+    from .fx import get_fx
+    return get_fx()
+
+
 # ---------- гипотезы ----------
 class GenerateIn(BaseModel):
     weights: dict | None = None
@@ -402,6 +410,31 @@ def generate(pid: str, body: GenerateIn, store: Store = Depends(get_store),
     verify_citations(hyps, kb)
     prior = expert_titles_for_plant(report.plant) + \
         [h.title for h in store.get_hypotheses(pid, statuses=["accepted"])]
+    rank_hypotheses(hyps, weights=project.weights, prior_titles=prior)
+    store.save_hypotheses(pid, hyps, replace=True)
+    return hyps
+
+
+class RerankIn(BaseModel):
+    weights: dict | None = None
+
+
+@router.post("/projects/{pid}/hypotheses/rerank")
+def rerank(pid: str, body: RerankIn, store: Store = Depends(get_store)) -> list[Hypothesis]:
+    """Пере-ранжирование сохранённых гипотез новыми весами — без LLM.
+    Слайдеры весов действуют сразу, регенерация не нужна."""
+    project = _project_or_404(pid, store)
+    hyps = store.get_hypotheses(pid)
+    if not hyps:
+        return []
+    if body.weights:
+        project.weights = {**project.weights, **body.weights}
+        store.update_project(project)
+    got = store.get_reports(pid)
+    plant = got[0][0].plant if got and got[0] else project.plant
+    # prior — только наработки экспертов: принятые здесь не добавляем, иначе
+    # принятая гипотеза сматчится сама с собой и её novelty обнулится
+    prior = expert_titles_for_plant(plant)
     rank_hypotheses(hyps, weights=project.weights, prior_titles=prior)
     store.save_hypotheses(pid, hyps, replace=True)
     return hyps

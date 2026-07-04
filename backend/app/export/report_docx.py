@@ -11,7 +11,36 @@ from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.shared import Pt
 
 from ..diagnostics import DiagnosticsResult
+from ..fx import get_fx
 from ..models import Hypothesis, Project, RoadmapItem, TailingsReport
+
+
+def _rub(usd: float) -> str:
+    """Денежный эффект в рублях (курс ЦБ с кэшем, офлайн — дефолт пакета)."""
+    rub = usd * get_fx()["rub_per_usd"]
+    if abs(rub) >= 1e9:
+        return f"{rub / 1e9:,.2f} млрд ₽".replace(",", " ")
+    return f"{rub / 1e6:,.0f} млн ₽".replace(",", " ")
+
+
+def _usd(usd: float) -> str:
+    """Исходная сумма в долларах (биржевые цены металлов)."""
+    if abs(usd) >= 1e9:
+        return f"${usd / 1e9:,.2f} млрд".replace(",", " ")
+    return f"${usd / 1e6:,.1f} млн".replace(",", " ")
+
+
+def _rub_usd(usd: float) -> str:
+    return f"{_rub(usd)} ({_usd(usd)})"
+
+
+def _fx_note() -> str:
+    fx = get_fx()
+    if fx["source"] == "cbr" and fx["date"]:
+        d = fx["date"]
+        return (f"Эффект в ₽ по курсу ЦБ РФ {fx['rub_per_usd']:.2f} ₽/$ "
+                f"на {d[8:10]}.{d[5:7]}.{d[0:4]}.")
+    return f"Эффект в ₽ по курсу {fx['rub_per_usd']:.2f} ₽/$ (курс по умолчанию)."
 
 STAGE_LABELS = {"lab": "Лаборатория", "pilot": "ОПИ", "rollout": "Тираж"}
 CAPEX_LABELS = {"low": "низкий", "med": "средний", "medium": "средний", "high": "высокий"}
@@ -63,7 +92,7 @@ def build_report_docx(project: Project, report: TailingsReport, diag: Diagnostic
     table.style = "Light Grid Accent 1"
     hdr = table.rows[0].cells
     for i, name in enumerate(["№", "Гипотеза", "Передел", "Эффект, т/год",
-                              "Эффект, $/год", "CAPEX"]):
+                              "Эффект, ₽/год", "CAPEX"]):
         hdr[i].text = name
     for n, h in enumerate(top, 1):
         row = table.rows[n].cells
@@ -71,8 +100,10 @@ def build_report_docx(project: Project, report: TailingsReport, diag: Diagnostic
         row[1].text = h.title
         row[2].text = h.process_area
         row[3].text = f"{h.effect.tonnes_expected:,.0f}".replace(",", " ")
-        row[4].text = f"{h.effect.money_usd:,.0f}".replace(",", " ")
+        row[4].text = _rub_usd(h.effect.money_usd)
         row[5].text = CAPEX_LABELS.get(str(h.feasibility.get("capex", "med")).lower(), "средний")
+    note = d.add_paragraph()
+    note.add_run(_fx_note()).font.size = Pt(8)
 
     # дорожная карта
     if roadmap:
@@ -102,7 +133,7 @@ def build_report_docx(project: Project, report: TailingsReport, diag: Diagnostic
         d.add_paragraph(f"Механизм: {h.mechanism}")
         d.add_paragraph(
             f"Эффект: до {h.effect.tonnes_max:,.0f} т/год, ожидаемо "
-            f"{h.effect.tonnes_expected:,.0f} т/год ≈ ${h.effect.money_usd:,.0f}. "
+            f"{h.effect.tonnes_expected:,.0f} т/год ≈ {_rub_usd(h.effect.money_usd)}. "
             f"Допущения: {h.effect.assumptions}".replace(",", " "))
         if h.rationale:
             d.add_paragraph("Обоснование из литературы:")

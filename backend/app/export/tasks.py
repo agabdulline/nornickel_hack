@@ -6,9 +6,15 @@ import csv
 import io
 
 from ..diagnostics import DiagnosticsResult
+from ..fx import get_fx
 from ..models import Hypothesis, Project, RoadmapItem, TailingsReport
 
 STAGE_LABELS = {"lab": "лаборатория", "pilot": "ОПИ", "rollout": "тираж"}
+
+
+def _rub(usd: float) -> int:
+    """Эффект в рублях (курс ЦБ с кэшем, офлайн — дефолт пакета)."""
+    return round(usd * get_fx()["rub_per_usd"])
 
 
 def to_tasks_csv(hypotheses: list[Hypothesis],
@@ -17,7 +23,7 @@ def to_tasks_csv(hypotheses: list[Hypothesis],
     buf = io.StringIO()
     w = csv.writer(buf, delimiter=";")
     w.writerow(["hypothesis", "status", "stage", "start", "end", "resource",
-                "criterion", "effect_tonnes", "effect_usd"])
+                "criterion", "effect_tonnes", "effect_rub", "effect_usd"])
     by_id = {h.id: h for h in hypotheses}
     if roadmap:
         for it in roadmap:
@@ -26,13 +32,15 @@ def to_tasks_csv(hypotheses: list[Hypothesis],
                         STAGE_LABELS.get(it.stage, it.stage), it.start, it.end,
                         it.resource or "", it.gate_criterion or "",
                         h.effect.tonnes_expected if h else "",
-                        h.effect.money_usd if h else ""])
+                        _rub(h.effect.money_usd) if h else "",
+                        round(h.effect.money_usd) if h else ""])
     else:
         for h in hypotheses:
             for s in h.verification_plan:
                 w.writerow([h.title, h.status, f"шаг {s.n}: {s.action}", "", "",
                             s.resources, s.success_criterion,
-                            h.effect.tonnes_expected, h.effect.money_usd])
+                            h.effect.tonnes_expected, _rub(h.effect.money_usd),
+                            round(h.effect.money_usd)])
     return "﻿" + buf.getvalue()  # BOM: Excel читает кириллицу
 
 

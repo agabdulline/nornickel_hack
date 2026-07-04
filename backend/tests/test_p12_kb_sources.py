@@ -201,6 +201,57 @@ def test_doc_topic_classification(tmp_path):
     assert KBIndex(root=tmp_path, use_dense=False).docs["d1"]["topic"] == "прочее"
 
 
+def test_kb_translate_endpoint(tmp_path, monkeypatch):
+    """Перевод en-фрагмента: батч-вызов FAST, дисковый кэш, 503 без ключа."""
+    import json as _json
+
+    from fastapi.testclient import TestClient
+
+    import backend.app.api as api
+    import backend.app.config as config
+    import backend.app.kb.translate as tr
+    from backend.app.main import app
+
+    monkeypatch.setattr(config, "STORAGE", tmp_path / "st")
+    monkeypatch.setattr(tr, "STORAGE", tmp_path / "st")
+    monkeypatch.setattr(tr, "_CACHE", None)
+
+    idx = KBIndex(root=tmp_path / "kb", use_dense=False)
+    pages = [(1, EN)]
+    idx.add_document("d1", "flotation.pdf", pages, chunk_pages(pages, target=200))
+    cid = idx.chunks[0]["chunk_id"]
+
+    class FakeLLM:
+        enabled = True
+        calls = 0
+
+        def chat(self, messages, strong=False, json_mode=False):
+            FakeLLM.calls += 1
+            return {"content": _json.dumps(
+                {"translations": [{"n": 0, "text": "Пенная флотация сульфидных минералов."}]},
+                ensure_ascii=False)}
+
+    app.dependency_overrides[api.get_kb] = lambda: idx
+    monkeypatch.setattr(api, "llm_client", FakeLLM())
+    try:
+        client = TestClient(app)
+        r = client.post("/api/kb/translate", json={"chunk_ids": [cid]})
+        assert r.status_code == 200
+        assert "флотация" in r.json()["translations"][cid].lower()
+        # повторный запрос — из кэша, без нового вызова LLM
+        client.post("/api/kb/translate", json={"chunk_ids": [cid]})
+        assert FakeLLM.calls == 1
+
+        class DeadLLM:
+            enabled = False
+        monkeypatch.setattr(api, "llm_client", DeadLLM())
+        monkeypatch.setattr(tr, "_CACHE", {})
+        r3 = client.post("/api/kb/translate", json={"chunk_ids": [cid]})
+        assert r3.status_code == 503
+    finally:
+        app.dependency_overrides.clear()
+
+
 def test_doc_lang_tie_deterministic():
     from backend.app.kb.index import doc_lang
     assert doc_lang([RU, EN]) == "ru", "при ничьей приоритет ru"

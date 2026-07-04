@@ -217,8 +217,13 @@ export const api = {
   kbChunk: (chunkId: string) =>
     j<{
       chunk_id: string; doc_id: string; text: string; source: string
-      page_start: number; page_end?: number; has_file?: boolean
+      page_start: number; page_end?: number; has_file?: boolean; lang?: string
     }>(fetch(`/api/kb/chunk/${encodeURIComponent(chunkId)}`)),
+  kbTranslate: (chunkIds: string[]) =>
+    j<{ translations: Record<string, string> }>(fetch('/api/kb/translate', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ chunk_ids: chunkIds }),
+    })),
 }
 
 /** Курс отображения денежного эффекта. Внутри данные в USD (биржевые цены

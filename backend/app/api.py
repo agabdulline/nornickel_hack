@@ -823,8 +823,26 @@ def kb_chunk(chunk_id: str, kb: KBIndex = Depends(get_kb)) -> dict:
     c = kb.get_chunk(chunk_id)
     if not c:
         raise HTTPException(404, "чанк не найден")
-    # has_file — фронт показывает вкладку «Исходник» (PDF на нужной странице)
-    return {**c, "has_file": _kb_source_file(c["source"], c["doc_id"]) is not None}
+    # has_file — вкладка «Исходник»; lang — кнопка «Перевести на русский»
+    return {**c, "has_file": _kb_source_file(c["source"], c["doc_id"]) is not None,
+            "lang": kb.docs.get(c["doc_id"], {}).get("lang", "ru")}
+
+
+class KbTranslateIn(BaseModel):
+    chunk_ids: list[str] = Field(max_length=12)
+
+
+@router.post("/kb/translate")
+def kb_translate(body: KbTranslateIn, kb: KBIndex = Depends(get_kb)) -> dict:
+    """Перевод фрагментов en/zh источника на русский (кэшируется)."""
+    from .kb.translate import translate_chunks
+    from .llm import LLMUnavailable
+    try:
+        return {"translations": translate_chunks(body.chunk_ids, kb, llm_client)}
+    except LLMUnavailable as e:
+        raise HTTPException(503, f"перевод недоступен: {e}")
+    except ValueError as e:
+        raise HTTPException(502, f"перевод не разобран: {e}")
 
 
 class AskIn(BaseModel):

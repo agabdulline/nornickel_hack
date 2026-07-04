@@ -230,9 +230,12 @@ function DocPreviewModal({ doc, onClose }: { doc: KbDoc; onClose: () => void }) 
   const [chunks, setChunks] = useState<{ chunk_id: string; page_start: number; page_end: number; text: string }[]>([])
   const [total, setTotal] = useState<number | null>(null)
   const [hasFile, setHasFile] = useState(false)
-  const [mode, setMode] = useState<'text' | 'file'>('text')
+  const [mode, setMode] = useState<'text' | 'ru' | 'file'>('text')
+  const [ru, setRu] = useState<Record<string, string>>({})
+  const [ruBusy, setRuBusy] = useState(false)
   const [loading, setLoading] = useState(false)
   const [err, setErr] = useState('')
+  const foreign = langOf(doc) !== 'ru'
 
   const load = (offset: number) => {
     setLoading(true)
@@ -246,17 +249,30 @@ function DocPreviewModal({ doc, onClose }: { doc: KbDoc; onClose: () => void }) 
   }
   useEffect(() => { load(0) }, [doc.doc_id])
 
+  // перевод видимых фрагментов — лениво, батчем, с серверным кэшем
+  useEffect(() => {
+    if (mode !== 'ru' || ruBusy) return
+    const missing = chunks.filter(c => !(c.chunk_id in ru)).map(c => c.chunk_id)
+    if (missing.length === 0) return
+    setRuBusy(true)
+    api.kbTranslate(missing.slice(0, 12))
+      .then(r => setRu(prev => ({ ...prev, ...r.translations })))
+      .catch(e => setErr(String(e)))
+      .finally(() => setRuBusy(false))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mode, chunks])
+
+  const tabs: { value: 'text' | 'ru' | 'file'; label: string }[] = [
+    { value: 'text', label: foreign ? 'Оригинал' : 'Текст' },
+    ...(foreign ? [{ value: 'ru' as const, label: 'По-русски' }] : []),
+    ...(hasFile ? [{ value: 'file' as const, label: 'Исходник' }] : []),
+  ]
   return (
     <Modal wide onClose={onClose}
       title={<span className="inline-flex items-center gap-3">
         <span className="truncate">{doc.source}</span>
         <span className="num text-faint font-normal shrink-0">{doc.pages} стр. · {doc.chunks} фрагм.</span>
-        {hasFile && (
-          <Segmented
-            options={[{ value: 'text', label: 'Текст' } as const,
-                      { value: 'file', label: 'Исходник' } as const]}
-            value={mode} onChange={setMode} />
-        )}
+        {tabs.length > 1 && <Segmented options={tabs} value={mode} onChange={setMode} />}
       </span>}>
       {err && <ErrorBox error={err} />}
       {mode === 'file' && hasFile ? (
@@ -266,13 +282,25 @@ function DocPreviewModal({ doc, onClose }: { doc: KbDoc; onClose: () => void }) 
           style={{ height: '68vh' }} />
       ) : (
         <div className="space-y-4">
+          {mode === 'ru' && (
+            <div className="text-[11px]" style={{ color: 'var(--c-faint)' }}>
+              Машинный перевод — термины и числа сверяйте с оригиналом.
+            </div>
+          )}
           {chunks.map(c => (
             <div key={c.chunk_id}>
               <div className="num text-xs text-faint mb-1">
                 с. {c.page_start}{c.page_end !== c.page_start ? `–${c.page_end}` : ''}
               </div>
               <div className="text-sm whitespace-pre-wrap leading-relaxed" style={{ color: 'var(--c-text)' }}>
-                {reflowPdfText(c.text)}
+                {mode === 'ru'
+                  ? (ru[c.chunk_id] ?? (ruBusy
+                      ? <span className="inline-flex items-center gap-2 text-faint">
+                          <span className="inline-block w-3.5 h-3.5 rounded-full border-2 border-current border-t-transparent animate-spin" />
+                          Переводим…
+                        </span>
+                      : <span className="text-faint">Перевод не получен.</span>))
+                  : reflowPdfText(c.text)}
               </div>
             </div>
           ))}

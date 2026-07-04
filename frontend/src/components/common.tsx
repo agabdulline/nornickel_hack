@@ -314,14 +314,28 @@ export function reflowPdfText(text: string): string {
 export function ChunkModal({ chunkId, quote, onClose }:
   { chunkId: string; quote?: string; onClose: () => void }) {
   const [chunk, setChunk] = useState<{
-    doc_id: string; text: string; source: string; page_start: number; has_file?: boolean
+    doc_id: string; text: string; source: string; page_start: number
+    has_file?: boolean; lang?: string
   } | null>(null)
-  const [mode, setMode] = useState<'text' | 'file'>('text')
+  const [mode, setMode] = useState<'text' | 'ru' | 'file'>('text')
+  const [ruText, setRuText] = useState<string | null>(null)
+  const [ruBusy, setRuBusy] = useState(false)
   const [err, setErr] = useState('')
   useEffect(() => {
-    setMode('text')
+    setMode('text'); setRuText(null)
     api.kbChunk(chunkId).then(setChunk).catch(e => setErr(String(e)))
   }, [chunkId])
+
+  // перевод en/zh фрагмента на русский — лениво, при первом открытии вкладки
+  useEffect(() => {
+    if (mode !== 'ru' || ruText !== null || ruBusy) return
+    setRuBusy(true)
+    api.kbTranslate([chunkId])
+      .then(r => setRuText(r.translations[chunkId] ?? 'Перевод не получен.'))
+      .catch(e => setErr(String(e)))
+      .finally(() => setRuBusy(false))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mode, chunkId])
 
   const hl = (text: string) => {
     if (!quote) return text
@@ -338,17 +352,18 @@ export function ChunkModal({ chunkId, quote, onClose }:
   }
 
   const isPdf = chunk?.source.toLowerCase().endsWith('.pdf')
+  const foreign = chunk?.lang != null && chunk.lang !== 'ru'
+  const tabs: { value: 'text' | 'ru' | 'file'; label: string }[] = [
+    { value: 'text', label: foreign ? 'Оригинал' : 'Текст' },
+    ...(foreign ? [{ value: 'ru' as const, label: 'По-русски' }] : []),
+    ...(chunk?.has_file ? [{ value: 'file' as const, label: isPdf ? 'Исходник (PDF)' : 'Исходник' }] : []),
+  ]
   return (
     <Modal wide={mode === 'file'} onClose={onClose}
       title={chunk ? (
         <span className="inline-flex items-center gap-3 min-w-0">
           <span className="truncate">{chunk.source}, с. {chunk.page_start}</span>
-          {chunk.has_file && (
-            <Segmented
-              options={[{ value: 'text', label: 'Текст' } as const,
-                        { value: 'file', label: isPdf ? 'Исходник (PDF)' : 'Исходник' } as const]}
-              value={mode} onChange={setMode} />
-          )}
+          {tabs.length > 1 && <Segmented options={tabs} value={mode} onChange={setMode} />}
         </span>
       ) : chunkId}>
       {err && <ErrorBox error={err} />}
@@ -358,6 +373,20 @@ export function ChunkModal({ chunkId, quote, onClose }:
             + (isPdf ? `#page=${chunk.page_start}` : '')}
           className="w-full rounded-md bg-white"
           style={{ height: '68vh', border: '1px solid var(--c-line)' }} />
+      ) : mode === 'ru' ? (
+        <div className="text-sm whitespace-pre-wrap leading-relaxed" style={{ color: 'var(--c-text)' }}>
+          {ruBusy
+            ? <span className="inline-flex items-center gap-2 text-faint">
+                <span className="inline-block w-4 h-4 rounded-full border-2 border-current border-t-transparent animate-spin" />
+                Переводим…
+              </span>
+            : (ruText ?? '')}
+          {!ruBusy && ruText && (
+            <div className="text-[11px] mt-3" style={{ color: 'var(--c-faint)' }}>
+              Машинный перевод — термины и числа сверяйте с оригиналом.
+            </div>
+          )}
+        </div>
       ) : (
         <div className="text-sm whitespace-pre-wrap leading-relaxed" style={{ color: 'var(--c-text)' }}>
           {chunk ? hl(reflowPdfText(chunk.text)) : 'Загрузка…'}

@@ -283,8 +283,8 @@ export function Modal({ title, onClose, children, wide = false }: {
       <div className={`card animate-in w-full ${wide ? 'max-w-4xl' : 'max-w-2xl'} max-h-[82vh] flex flex-col`}
         style={{ boxShadow: 'var(--shadow-pop)' }} onClick={e => e.stopPropagation()}>
         <header className="flex items-center justify-between gap-3 px-4 py-3 border-b" style={{ borderColor: 'var(--c-line)' }}>
-          <div className="font-bold text-sm truncate">{title}</div>
-          <button className="btn btn-ghost !px-2" onClick={onClose} aria-label="Закрыть"><Icon name="x" /></button>
+          <div className="font-bold text-sm flex-1 min-w-0">{title}</div>
+          <button className="btn btn-ghost !px-2 shrink-0" onClick={onClose} aria-label="Закрыть"><Icon name="x" /></button>
         </header>
         <div className="overflow-auto p-4">{children}</div>
       </div>
@@ -314,35 +314,39 @@ export function reflowPdfText(text: string): string {
 }
 
 /** Модалка источника цитаты: «Текст» — фрагмент с подсветкой цитаты,
- * «Исходник» — оригинальный PDF, открытый на странице цитаты. */
+ * «Исходник» — PDF на странице цитаты. Стрелками ← → листаются соседние
+ * фрагменты документа — контекст читается дальше границ чанка. */
 export function ChunkModal({ chunkId, quote, onClose }:
   { chunkId: string; quote?: string; onClose: () => void }) {
+  const [curId, setCurId] = useState(chunkId)
   const [chunk, setChunk] = useState<{
     doc_id: string; text: string; source: string; page_start: number
-    has_file?: boolean; lang?: string
+    has_file?: boolean; lang?: string; n?: number; doc_chunks?: number
   } | null>(null)
   const [mode, setMode] = useState<'text' | 'ru' | 'file'>('text')
   const [ruText, setRuText] = useState<string | null>(null)
   const [ruBusy, setRuBusy] = useState(false)
   const [err, setErr] = useState('')
+  useEffect(() => { setCurId(chunkId); setMode('text') }, [chunkId])
   useEffect(() => {
-    setMode('text'); setRuText(null)
-    api.kbChunk(chunkId).then(setChunk).catch(e => setErr(String(e)))
-  }, [chunkId])
+    setRuText(null); setErr('')
+    api.kbChunk(curId).then(setChunk).catch(e => setErr(String(e)))
+  }, [curId])
 
   // перевод en/zh фрагмента на русский — лениво, при первом открытии вкладки
   useEffect(() => {
     if (mode !== 'ru' || ruText !== null || ruBusy) return
     setRuBusy(true)
-    api.kbTranslate([chunkId])
-      .then(r => setRuText(r.translations[chunkId] ?? 'Перевод не получен.'))
+    api.kbTranslate([curId])
+      .then(r => setRuText(r.translations[curId] ?? 'Перевод не получен.'))
       .catch(e => setErr(String(e)))
       .finally(() => setRuBusy(false))
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mode, chunkId])
+  }, [mode, curId])
 
   const hl = (text: string) => {
-    if (!quote) return text
+    // подсветка цитаты — только на исходном фрагменте, не на соседях
+    if (!quote || curId !== chunkId) return text
     const probe = quote.split(' ').slice(0, 6).join(' ')
     const i = text.toLowerCase().indexOf(probe.toLowerCase())
     if (i < 0) return text
@@ -360,14 +364,25 @@ export function ChunkModal({ chunkId, quote, onClose }:
   const tabs: { value: 'text' | 'ru' | 'file'; label: string }[] = [
     { value: 'text', label: foreign ? 'Оригинал' : 'Текст' },
     ...(foreign ? [{ value: 'ru' as const, label: 'По-русски' }] : []),
-    ...(chunk?.has_file ? [{ value: 'file' as const, label: isPdf ? 'Исходник (PDF)' : 'Исходник' }] : []),
+    ...(chunk?.has_file ? [{ value: 'file' as const, label: isPdf ? 'PDF' : 'Исходник' }] : []),
   ]
+
+  const n = chunk?.n ?? 0
+  const total = chunk?.doc_chunks ?? 1
+  const goto = (delta: number) => {
+    if (!chunk) return
+    const next = n + delta
+    if (next < 0 || next >= total) return
+    setCurId(`${chunk.doc_id}:${next}`)
+  }
+
   return (
     <Modal wide={mode === 'file'} onClose={onClose}
       title={chunk ? (
-        <span className="inline-flex items-center gap-3 min-w-0">
-          <span className="truncate">{chunk.source}, с. {chunk.page_start}</span>
-          {tabs.length > 1 && <Segmented options={tabs} value={mode} onChange={setMode} />}
+        <span className="flex items-center gap-3 min-w-0">
+          <span className="truncate flex-1 min-w-0">{chunk.source}, с. {chunk.page_start}</span>
+          {tabs.length > 1 &&
+            <span className="shrink-0"><Segmented options={tabs} value={mode} onChange={setMode} /></span>}
         </span>
       ) : chunkId}>
       {err && <ErrorBox error={err} />}
@@ -394,6 +409,26 @@ export function ChunkModal({ chunkId, quote, onClose }:
       ) : (
         <div className="text-sm whitespace-pre-wrap leading-relaxed" style={{ color: 'var(--c-text)' }}>
           {chunk ? hl(reflowPdfText(chunk.text)) : 'Загрузка…'}
+        </div>
+      )}
+      {mode !== 'file' && chunk && (
+        <div className="flex items-center justify-between gap-3 mt-4 pt-3 border-t"
+          style={{ borderColor: 'var(--c-line)' }}>
+          <button className="btn btn-sm" disabled={n <= 0} onClick={() => goto(-1)}
+            title="Предыдущий фрагмент документа">
+            <Icon name="arrowRight" className="w-4 h-4 rotate-180" /> Назад
+          </button>
+          <span className="num text-xs" style={{ color: 'var(--c-faint)' }}>
+            фрагмент {n + 1} из {total}
+            {curId !== chunkId && quote && (
+              <button className="ml-2 text-brand hover:underline underline-offset-2 cursor-pointer"
+                onClick={() => setCurId(chunkId)}>к цитате</button>
+            )}
+          </span>
+          <button className="btn btn-sm" disabled={n >= total - 1} onClick={() => goto(1)}
+            title="Следующий фрагмент документа">
+            Вперёд <Icon name="arrowRight" className="w-4 h-4" />
+          </button>
         </div>
       )}
     </Modal>

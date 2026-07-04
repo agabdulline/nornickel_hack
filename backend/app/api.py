@@ -893,9 +893,15 @@ def kb_chunk(chunk_id: str, kb: KBIndex = Depends(get_kb)) -> dict:
     c = kb.get_chunk(chunk_id)
     if not c:
         raise HTTPException(404, "чанк не найден")
-    # has_file — вкладка «Исходник»; lang — кнопка «Перевести на русский»
+    meta = kb.docs.get(c["doc_id"], {})
+    try:
+        n = int(chunk_id.rsplit(":", 1)[1])
+    except (IndexError, ValueError):
+        n = 0
+    # has_file — вкладка «Исходник»; lang — «По-русски»; n/doc_chunks — листание
     return {**c, "has_file": _kb_source_file(c["source"], c["doc_id"]) is not None,
-            "lang": kb.docs.get(c["doc_id"], {}).get("lang", "ru")}
+            "lang": meta.get("lang", "ru"),
+            "n": n, "doc_chunks": meta.get("chunks", n + 1)}
 
 
 class KbTranslateIn(BaseModel):

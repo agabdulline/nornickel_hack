@@ -358,6 +358,7 @@ def test_kb_document_file_endpoint(tmp_path, monkeypatch):
         chunk_id = idx.chunks[0]["chunk_id"]
         cr = client.get(f"/api/kb/chunk/{chunk_id}").json()
         assert cr["has_file"] is True and cr["doc_id"] == "d1"
+        assert cr["n"] == 0 and cr["doc_chunks"] >= 1, "координаты для листания"
         assert client.get("/api/kb/documents/нет/file").status_code == 404
     finally:
         app.dependency_overrides.clear()

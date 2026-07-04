@@ -96,9 +96,13 @@ def main():
             if path.suffix.lower() in (".pdf", ".txt"):
                 ingest_if_new(path)
 
-    # 2. проект + отчёт (Пример 2)
-    project = store.create_project("НОФ · вкрапленные руды · Q2 2026",
-                                   goal="Снижение потерь Ni и Cu в отвальных хвостах")
+    # 2. проект + отчёт (Пример 2). plant = id реальной линии (её сидит store),
+    #    а квартал — в название проекта: иначе проект «повиснет» на объекте, не
+    #    заведённом как линия, и line-scoped данные (оборудование, стоп-лист линии)
+    #    не покажутся в «Базе знаний».
+    project = store.create_project("НОФ · вкрапленные руды",
+                                   goal="Снижение потерь Ni и Cu в отвальных хвостах",
+                                   name="НОФ · вкрапленные руды · Q2 2026")
     xlsx = find_file(r"Пример 2/Хвосты.*Вкр\.xlsx$")
     parsed = parse_workbook(xlsx)
     report = parsed.reports[0]

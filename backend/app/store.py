@@ -144,6 +144,7 @@ class Store:
         self._migrate_chats()
         self._seed_equipment()
         self._seed_lines()
+        self._migrate_project_lines()
         self._seed_materials()
         self._seed_materials_catalog()
         self._conn.commit()
@@ -201,6 +202,40 @@ class Store:
             "UPDATE lines SET kind = CASE type WHEN 'factory' THEN 'производственная линия' "
             "WHEN 'lab' THEN 'лаборатория' ELSE 'производственная линия' END WHERE kind IS NULL")
         self._conn.execute("UPDATE lines SET ownership = 'в штате компании' WHERE ownership IS NULL")
+
+    def _migrate_project_lines(self):
+        """Реконсиляция привязки проект→линия (line-scoped данные).
+
+        У части старых/сид-проектов plant был свободным текстом, не совпадающим
+        с id линии (напр. «НОФ · вкрапленные руды · Q2 2026» вместо линии
+        «НОФ · вкрапленные руды»), из-за чего оборудование и стоп-лист линии не
+        показывались в «Базе знаний». Здесь привязываем к реальной линии: если
+        plant без хвоста-квартала ' · QN YYYY' совпадает с существующей линией —
+        репойнтим туда, а хвост уводим в name; иначе заводим линию с этим plant.
+        Переносим и записи стоп-листа. Идемпотентно (после фикса — no-op).
+        Требует уже засиженных линий, поэтому вызывается ПОСЛЕ _seed_lines."""
+        import re
+        quarter = re.compile(r"\s*·\s*Q[1-4]\s+\d{4}\s*$")
+        line_ids = {r["id"] for r in self._conn.execute("SELECT id FROM lines")}
+        for row in self._conn.execute("SELECT id, plant, name FROM projects").fetchall():
+            pid, plant = row["id"], row["plant"]
+            name = row["name"] if "name" in row.keys() else None
+            if not plant or plant in line_ids:
+                continue                       # уже привязан к реальной линии
+            base = quarter.sub("", plant).strip()
+            if base and base != plant and base in line_ids:
+                # репойнт на существующую линию, квартал сохраняем в названии
+                self._conn.execute("UPDATE projects SET plant=?, name=? WHERE id=?",
+                                   (base, name or plant, pid))
+                self._conn.execute("UPDATE line_stoplist SET line_id=? WHERE line_id=?",
+                                   (base, plant))
+            else:
+                # объект не заведён как линия — регистрируем его (id = plant)
+                self._conn.execute(
+                    "INSERT INTO lines (id, name, type, kind, ownership) VALUES (?,?,?,?,?)",
+                    (plant, plant, "производственная линия",
+                     "производственная линия", "в штате компании"))
+                line_ids.add(plant)
 
     def _seed_lines(self):
         # посрочная проверка по id (как в _seed_equipment) — иначе на уже

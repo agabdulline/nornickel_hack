@@ -292,8 +292,9 @@ def _reground_citations(hyps: list[Hypothesis], kb_index: KBIndex):
         good = []
         for cit in h.rationale:
             chunk = kb_index.get_chunk(cit.chunk_id) if cit.chunk_id else None
-            if chunk and fuzz.partial_ratio(norm(cit.quote), norm(chunk["text"])) > 75:
-                good.append(cit)
+            if chunk and fuzz.partial_ratio(norm(cit.quote), norm(chunk["text"])) > 75 \
+                    and kb_index.doc_enabled(chunk["doc_id"]):
+                good.append(cit)  # выключенный источник не проходит в новые цитаты
         target = min(max(len(h.rationale), 1), 2)
         if len(good) >= target:
             h.rationale = good

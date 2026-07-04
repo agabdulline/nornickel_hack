@@ -9,7 +9,9 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import shutil
+import threading
 import time
 from pathlib import Path
 
@@ -25,6 +27,29 @@ RRF_K = 60
 CAND = 40  # кандидатов с каждой ветки до слияния
 
 
+def detect_lang(text: str) -> str:
+    """Язык текста по алфавиту: ru / en / zh (для группировки источников)."""
+    sample = text[:5000]
+    cyr = sum(1 for ch in sample if "а" <= ch.lower() <= "я" or ch.lower() == "ё")
+    cjk = sum(1 for ch in sample if "一" <= ch <= "鿿")
+    lat = sum(1 for ch in sample if "a" <= ch.lower() <= "z")
+    best = max(("ru", cyr), ("zh", cjk), ("en", lat), key=lambda kv: kv[1])
+    return best[0] if best[1] > 0 else "ru"
+
+
+def doc_lang(texts: list[str]) -> str:
+    """Язык документа: голосование detect_lang по чанкам, равномерно
+    рассеянным по документу (начало бывает нерепрезентативным — латинские
+    шапки патентов, оглавления). При ничьей приоритет ru > en > zh
+    (детерминированно, не зависит от порядка set)."""
+    if not texts:
+        return "ru"
+    n = len(texts)
+    idxs = sorted({round(i * (n - 1) / 8) for i in range(9)}) if n > 9 else range(n)
+    votes = [detect_lang(texts[i]) for i in idxs]
+    return max(("ru", "en", "zh"), key=lambda k: (votes.count(k), k == "ru", k == "en"))
+
+
 class KBIndex:
     def __init__(self, root: Path | None = None, use_dense: bool = True):
         self.root = Path(root) if root else STORAGE / "kb"
@@ -36,6 +61,8 @@ class KBIndex:
         self._bm25: BM25Plus | None = None
         self._token_sets: list[set] | None = None
         self._chroma = None
+        # мутируют из разных потоков: request-threadpool uvicorn + фоновый OCR
+        self._lock = threading.RLock()
         self._load()
 
     # ---------- персистентность ----------
@@ -55,36 +82,85 @@ class KBIndex:
             with self._chunks_path.open(encoding="utf-8") as f:
                 self.chunks = [json.loads(line) for line in f if line.strip()]
         self._bm25 = None
+        # миграция старых индексов: докам без lang/enabled проставляем дефолты
+        changed = False
+        for doc_id, d in self.docs.items():
+            if "enabled" not in d:
+                d["enabled"] = True
+                changed = True
+            if "lang" not in d:
+                d["lang"] = doc_lang([c["text"] for c in self.chunks
+                                      if c["doc_id"] == doc_id])
+                changed = True
+        if changed:
+            with self._lock:
+                self._save_meta()
+
+    @staticmethod
+    def _atomic_write(path: Path, text: str):
+        """Запись через tmp + os.replace: параллельный читатель никогда не
+        увидит усечённый файл (конкурентные _save из OCR-треда и API)."""
+        tmp = path.with_suffix(path.suffix + ".tmp")
+        tmp.write_text(text, encoding="utf-8")
+        os.replace(tmp, path)
+
+    def _save_meta(self):
+        """Лёгкое сохранение только meta.json (статусы, enabled, прогресс OCR) —
+        не переписывает многомегабайтный chunks.jsonl."""
+        self.meta["docs"] = self.docs
+        self._atomic_write(self._meta_path,
+                           json.dumps(self.meta, ensure_ascii=False, indent=1))
 
     def _save(self):
-        self.meta["docs"] = self.docs
-        self._meta_path.write_text(json.dumps(self.meta, ensure_ascii=False, indent=1),
-                                   encoding="utf-8")
-        with self._chunks_path.open("w", encoding="utf-8") as f:
-            for c in self.chunks:
-                f.write(json.dumps(c, ensure_ascii=False) + "\n")
+        self._save_meta()
+        self._atomic_write(self._chunks_path,
+                           "".join(json.dumps(c, ensure_ascii=False) + "\n"
+                                   for c in self.chunks))
 
     # ---------- наполнение ----------
     def add_document(self, doc_id: str, source: str, pages: list[tuple[int, str]],
                      chunks: list[dict], status: str = "indexed") -> dict:
         """Регистрирует документ; chunks — из textnorm.chunk_pages."""
-        self.chunks = [c for c in self.chunks if c["doc_id"] != doc_id]
-        for n, ch in enumerate(chunks):
-            self.chunks.append({
-                "chunk_id": f"{doc_id}:{n}",
-                "doc_id": doc_id,
-                "source": source,
-                "page_start": ch["page_start"],
-                "page_end": ch["page_end"],
-                "text": ch["text"],
-            })
-        self.docs[doc_id] = {"source": source, "pages": len(pages),
-                             "chunks": len(chunks), "status": status}
-        self._bm25 = None
-        self._save()
+        with self._lock:
+            self.chunks = [c for c in self.chunks if c["doc_id"] != doc_id]
+            for n, ch in enumerate(chunks):
+                self.chunks.append({
+                    "chunk_id": f"{doc_id}:{n}",
+                    "doc_id": doc_id,
+                    "source": source,
+                    "page_start": ch["page_start"],
+                    "page_end": ch["page_end"],
+                    "text": ch["text"],
+                })
+            prev = self.docs.get(doc_id, {})
+            self.docs[doc_id] = {"source": source, "pages": len(pages),
+                                 "chunks": len(chunks), "status": status,
+                                 "lang": doc_lang([ch["text"] for ch in chunks])
+                                 if chunks else prev.get("lang", "ru"),
+                                 "enabled": prev.get("enabled", True)}
+            self._bm25 = None
+            self._save()
         if status.startswith("indexed") and self.use_dense and chunks:
             self._dense_add(doc_id)
         return self.docs[doc_id]
+
+    def delete_document(self, doc_id: str) -> bool:
+        """Удаляет документ: чанки, dense-векторы, запись в docs."""
+        with self._lock:
+            if doc_id not in self.docs:
+                return False
+            part_ids = [c["chunk_id"] for c in self.chunks if c["doc_id"] == doc_id]
+            self.chunks = [c for c in self.chunks if c["doc_id"] != doc_id]
+            self.docs.pop(doc_id)
+            self._bm25 = None
+            self._save()
+        if part_ids and self.use_dense:
+            try:
+                self._collection().delete(ids=part_ids)
+            except Exception as e:  # noqa: BLE001 — dense мог быть не собран
+                log.warning("dense-удаление «%s» не удалось (%s)", doc_id, type(e).__name__)
+        log.info("Документ «%s» удалён (%d чанков)", doc_id, len(part_ids))
+        return True
 
     # ---------- BM25 ----------
     def _ensure_bm25(self):
@@ -175,25 +251,37 @@ class KBIndex:
                  doc_id, time.perf_counter() - t0, len(part))
 
     # ---------- поиск ----------
-    def search(self, query: str, k: int = 5) -> list[dict]:
-        """Гибрид BM25 + dense через RRF. Деградирует до BM25-only без модели."""
-        if not self.chunks:
-            return []
-        by_id = {c["chunk_id"]: c for c in self.chunks}
-        ranks: dict[str, float] = {}
+    def _disabled_docs(self) -> set[str]:
+        return {doc_id for doc_id, d in self.docs.items() if d.get("enabled") is False}
 
-        self._ensure_bm25()
-        q_tokens = set(tokenize(query))
-        scores = self._bm25.get_scores(tokenize(query))
-        # кандидаты — только чанки, содержащие хотя бы один токен запроса
-        # (BM25Plus даёт положительный baseline даже без совпадений)
-        cand_idx = [i for i in range(len(self.chunks)) if self._token_sets[i] & q_tokens]
-        bm25_order = sorted(cand_idx, key=lambda i: -scores[i])[:CAND]
-        bm25_scores = {}
-        for rank, idx in enumerate(bm25_order):
-            cid = self.chunks[idx]["chunk_id"]
-            ranks[cid] = ranks.get(cid, 0) + 1.0 / (RRF_K + rank + 1)
-            bm25_scores[cid] = float(scores[idx])
+    def search(self, query: str, k: int = 5) -> list[dict]:
+        """Гибрид BM25 + dense через RRF. Деградирует до BM25-only без модели.
+        Выключенные пользователем источники (enabled=false) не участвуют."""
+        # BM25-часть — под локом: delete_document/add_document из других
+        # потоков реассайнят chunks и сбрасывают _bm25 (иначе NoneType/рассинхрон)
+        with self._lock:
+            if not self.chunks:
+                return []
+            off = self._disabled_docs()
+            off_chunks = sum(d.get("chunks", 0) for doc_id, d in self.docs.items()
+                             if doc_id in off)
+            by_id = {c["chunk_id"]: c for c in self.chunks if c["doc_id"] not in off}
+            ranks: dict[str, float] = {}
+
+            self._ensure_bm25()
+            q_tokens = set(tokenize(query))
+            scores = self._bm25.get_scores(tokenize(query))
+            # кандидаты — только чанки, содержащие хотя бы один токен запроса
+            # (BM25Plus даёт положительный baseline даже без совпадений)
+            cand_idx = [i for i in range(len(self.chunks))
+                        if self._token_sets[i] & q_tokens
+                        and self.chunks[i]["doc_id"] not in off]
+            bm25_order = sorted(cand_idx, key=lambda i: -scores[i])[:CAND]
+            bm25_scores = {}
+            for rank, idx in enumerate(bm25_order):
+                cid = self.chunks[idx]["chunk_id"]
+                ranks[cid] = ranks.get(cid, 0) + 1.0 / (RRF_K + rank + 1)
+                bm25_scores[cid] = float(scores[idx])
 
         dense_used = False
         if self._dense_ready():
@@ -202,11 +290,18 @@ class KBIndex:
                 col = self._collection()
                 if col.count() > 0:
                     q = encode(model, name, [query], query=True)[0]
+                    # chroma не фильтрует по doc_id — добираем кандидатов на
+                    # объём выключенных чанков, чтобы после пост-фильтра
+                    # dense-ветка не схлопнулась (выключена крупная книга)
                     got = col.query(query_embeddings=[list(map(float, q))],
-                                    n_results=min(CAND, col.count()))
-                    for rank, cid in enumerate(got["ids"][0]):
+                                    n_results=min(CAND + off_chunks, col.count()))
+                    dense_rank = 0
+                    for cid in got["ids"][0]:
                         if cid in by_id:
-                            ranks[cid] = ranks.get(cid, 0) + 1.0 / (RRF_K + rank + 1)
+                            ranks[cid] = ranks.get(cid, 0) + 1.0 / (RRF_K + dense_rank + 1)
+                            dense_rank += 1
+                            if dense_rank >= CAND:
+                                break
                     dense_used = True
             except Exception as e:  # noqa: BLE001
                 log.warning("dense-поиск упал (%s), BM25-only", type(e).__name__)
@@ -239,10 +334,20 @@ class KBIndex:
     def documents(self) -> list[dict]:
         return [{"doc_id": k, **v} for k, v in self.docs.items()]
 
-    def set_doc_meta(self, doc_id: str, **fields):
-        """Обновление статуса/прогресса документа (например, во время OCR)."""
-        self.docs.setdefault(doc_id, {}).update(fields)
-        self._save()
+    def doc_enabled(self, doc_id: str) -> bool:
+        d = self.docs.get(doc_id)
+        return bool(d) and d.get("enabled") is not False
+
+    def set_doc_meta(self, doc_id: str, **fields) -> bool:
+        """Обновление статуса/прогресса СУЩЕСТВУЮЩЕГО документа. Несуществующий
+        (например, удалённый во время фонового OCR) не создаётся заново —
+        возвращается False, вызывающий решает сам."""
+        with self._lock:
+            if doc_id not in self.docs:
+                return False
+            self.docs[doc_id].update(fields)
+            self._save_meta()  # чанки не менялись — chunks.jsonl не переписываем
+        return True
 
 
 _default_index: KBIndex | None = None

@@ -85,11 +85,17 @@ def test_ingest_small_real_pdf(tmp_path):
 
 @requires_data
 def test_ingest_scan_marks_status(tmp_path):
-    from backend.app.kb.ingest import ingest_pdf
-    idx = KBIndex(root=tmp_path, use_dense=False)
+    from backend.app.kb.ingest import ingest_pdf, load_ocr_sidecar
+    idx = KBIndex(root=tmp_path / "kb", use_dense=False)
     path = find_case_file(r"lodeyshchikov.*\.pdf$")
-    res = ingest_pdf(path, index=idx)
+    # без готового OCR-результата скан помечается scan_no_text и не индексируется
+    res = ingest_pdf(path, index=idx, ocr_dir=tmp_path / "нет-сайдкара")
     assert res["status"] == "scan_no_text"
     assert res["chunks"] == 0
-    docs = idx.documents()
-    assert docs[0]["status"] == "scan_no_text"
+    assert idx.documents()[0]["status"] == "scan_no_text"
+    # с готовым OCR-результатом (data/kb/ocr) — индексируется как OCR
+    if load_ocr_sidecar(path.name):
+        res2 = ingest_pdf(path, index=idx)
+        assert res2["status"] == "indexed_ocr"
+        assert res2["chunks"] > 100
+        assert idx.docs[res2["doc_id"]]["status"] == "indexed_ocr"

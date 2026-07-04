@@ -146,6 +146,15 @@ export const api = {
     fd.append('file', file)
     return j<KbDoc>(fetch('/api/kb/upload', { method: 'POST', body: fd }))
   },
+  kbSetEnabled: (docId: string, enabled: boolean) =>
+    j<KbDoc>(fetch(`/api/kb/documents/${encodeURIComponent(docId)}`, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ enabled }),
+    })),
+  kbDelete: (docId: string) =>
+    j<{ deleted: string }>(fetch(`/api/kb/documents/${encodeURIComponent(docId)}`, {
+      method: 'DELETE',
+    })),
   kbAsk: (question: string) =>
     j<{ answer: string; citations: { chunk_id: string; source: string; page: number; quote: string }[] }>(
       fetch('/api/kb/ask', {

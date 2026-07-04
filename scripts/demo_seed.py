@@ -59,18 +59,42 @@ def main():
     store = default_store()
     kb = default_index()
 
-    # 1. база знаний: 4 текстовых PDF + скан (бейдж «требуется OCR»)
+    # 1. база знаний: книги кейса (скан Лодейщикова индексируется из готового
+    # OCR-результата data/kb/ocr, без него — бейдж «требуется OCR»)
+    import unicodedata
+    from backend.app.kb.ingest import ingest_text
+
+    def ingest_if_new(path):
+        """Инжест, если файла ещё нет в индексе. Сравнение имён — в NFC
+        (кириллица, правило 12.7); док с 0 чанков (scan_no_text прежних
+        прогонов) переиндексируется — мог появиться OCR-sidecar."""
+        name = unicodedata.normalize("NFC", path.name)
+        known = next((d for d in kb.documents()
+                      if unicodedata.normalize("NFC", d["source"]) == name), None)
+        if known and known.get("chunks", 0) > 0:
+            print(f"KB: {path.name} уже в индексе")
+            return
+        t0 = time.time()
+        res = (ingest_text(path, index=kb) if path.suffix.lower() == ".txt"
+               else ingest_pdf(path, index=kb))
+        print(f"KB: {path.name} -> {res['status']}, {res['chunks']} чанков "
+              f"({time.time()-t0:.0f}с)")
+
     for pat in [r"flotacionnye.*\.pdf$", r"metallurgiya-blagorodnyh.*\.pdf$",
                 r"tehnologiyaobogashcheniya.*\.pdf$",
                 r"tehnologiya_izvlecheniya_zolota.*\.pdf$", r"lodeyshchikov.*\.pdf$"]:
-        path = find_file(pat)
-        doc_id_known = any(d["source"] == path.name for d in kb.documents())
-        if doc_id_known:
-            print(f"KB: {path.name} уже в индексе")
-            continue
-        t0 = time.time()
-        res = ingest_pdf(path, index=kb)
-        print(f"KB: {path.name} -> {res['status']}, {res['chunks']} чанков ({time.time()-t0:.0f}с)")
+        ingest_if_new(find_file(pat))
+
+    # 1а. внешние источники (статьи, патенты) из data/kb/extra
+    from backend.app.config import ROOT as APP_ROOT
+    extra_dir = APP_ROOT / "data" / "kb" / "extra"
+    if not extra_dir.exists():
+        print("KB: data/kb/extra отсутствует — внешние источники пропущены "
+              "(проверьте, что каталог доехал при деплое)")
+    else:
+        for path in sorted(extra_dir.iterdir()):
+            if path.suffix.lower() in (".pdf", ".txt"):
+                ingest_if_new(path)
 
     # 2. проект + отчёт (Пример 2)
     project = store.create_project("НОФ · вкрапленные руды · Q2 2026",

@@ -546,17 +546,25 @@ def export_json(pid: str, tail_type: str | None = None,
 # ---------- база знаний ----------
 @router.post("/kb/upload")
 async def kb_upload(file: UploadFile, kb: KBIndex = Depends(get_kb)) -> dict:
+    from fastapi.concurrency import run_in_threadpool
     data = await file.read()
     name = unicodedata.normalize("NFC", file.filename or "doc.pdf")
-    if not name.lower().endswith(".pdf"):
-        raise HTTPException(422, "поддерживаются только PDF")
-    result = ingest_pdf(data, filename=name, index=kb)
+    low = name.lower()
+    if low.endswith(".txt"):
+        from .kb.ingest import ingest_text
+        return await run_in_threadpool(ingest_text, data, name, kb)
+    if not low.endswith(".pdf"):
+        raise HTTPException(422, "поддерживаются PDF и TXT")
+    # чанкование + dense-эмбеддинг — минуты для больших книг: не блокируем event loop
+    result = await run_in_threadpool(ingest_pdf, data, name, kb)
     if result["status"] == "scan_no_text":
         from .kb import ocr as kb_ocr
         if kb_ocr.available():
-            _start_background_ocr(data, name, result["doc_id"], result["pages"], kb)
+            # статус ставим ДО старта потока: быстрый OCR не должен быть
+            # перезатёрт запоздавшим ocr_processing из этого потока
             kb.set_doc_meta(result["doc_id"], status="ocr_processing",
                             ocr_done=0, pages=result["pages"])
+            _start_background_ocr(data, name, result["doc_id"], result["pages"], kb)
             return {**result, "status": "ocr_processing",
                     "message": "скан без текстового слоя — распознаём Vision OCR, "
                                "прогресс в списке документов"}
@@ -575,6 +583,9 @@ def _start_background_ocr(data: bytes, name: str, doc_id: str, total: int, kb: K
                 if done % 5 == 0 or done == n:
                     kb.set_doc_meta(doc_id, status="ocr_processing", ocr_done=done, pages=n)
             pages = kb_ocr.ocr_pdf(data, progress=progress)
+            if doc_id not in kb.docs:  # документ удалили, пока шёл OCR
+                log.info("OCR %s: документ удалён во время распознавания — результат отброшен", name)
+                return
             ingest_ocr_pages(doc_id, name, pages, index=kb)
             log.info("OCR завершён: %s", name)
         except Exception as e:  # noqa: BLE001 — статус ошибки должен дойти до UI
@@ -587,6 +598,27 @@ def _start_background_ocr(data: bytes, name: str, doc_id: str, total: int, kb: K
 @router.get("/kb/documents")
 def kb_documents(kb: KBIndex = Depends(get_kb)) -> list[dict]:
     return kb.documents()
+
+
+class KbDocPatch(BaseModel):
+    enabled: bool
+
+
+@router.patch("/kb/documents/{doc_id}")
+def kb_document_patch(doc_id: str, body: KbDocPatch,
+                      kb: KBIndex = Depends(get_kb)) -> dict:
+    """Вкл/выкл источника: выключенный не участвует в поиске и в НОВЫХ
+    цитатах; ранее сохранённые цитаты гипотез остаются доступными."""
+    if not kb.set_doc_meta(doc_id, enabled=body.enabled):
+        raise HTTPException(404, "документ не найден")
+    return {"doc_id": doc_id, **kb.docs[doc_id]}
+
+
+@router.delete("/kb/documents/{doc_id}")
+def kb_document_delete(doc_id: str, kb: KBIndex = Depends(get_kb)) -> dict:
+    if not kb.delete_document(doc_id):
+        raise HTTPException(404, "документ не найден")
+    return {"deleted": doc_id}
 
 
 @router.get("/kb/chunk/{chunk_id}")

@@ -136,6 +136,7 @@ export interface ChatAnswer { text: string; references: ChatReference[] }
 export interface KbDoc {
   doc_id: string; source: string; pages: number; chunks: number; status: string;
   ocr_done?: number; error?: string;
+  lang?: 'ru' | 'en' | 'zh'; enabled?: boolean;
 }
 export interface KbHit {
   chunk_id: string; text: string; source: string; page: number; score: number;

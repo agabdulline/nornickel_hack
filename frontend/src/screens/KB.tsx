@@ -213,6 +213,12 @@ function LinesSection() {
   )
 }
 
+const LANG_GROUPS: { key: string; label: string; hint: string }[] = [
+  { key: 'ru', label: 'Русский', hint: 'учебники, статьи ГИАБ, патенты РФ' },
+  { key: 'en', label: 'English', hint: 'зарубежные статьи и справочники' },
+  { key: 'zh', label: '中文', hint: 'китайские источники' },
+]
+
 function DocStatus({ d }: { d: KbDoc }) {
   if (d.status === 'indexed')
     return <Badge tone="ok"><Icon name="check" className="w-3 h-3" /> индексирован</Badge>
@@ -270,6 +276,22 @@ export default function KB() {
     catch (e) { setErr(String(e)) } finally { setUploading(false) }
   }
 
+  const toggleDoc = async (d: KbDoc) => {
+    const next = !(d.enabled !== false)
+    // оптимистично, затем подтверждаем ответом бэкенда
+    setDocs(prev => prev.map(x => x.doc_id === d.doc_id ? { ...x, enabled: next } : x))
+    try { await api.kbSetEnabled(d.doc_id, next) }
+    catch (e) { setErr(String(e)); load() }
+  }
+
+  const deleteDoc = async (d: KbDoc) => {
+    if (!window.confirm(`Удалить источник «${d.source}» из базы знаний?\n`
+      + 'Чанки и векторы будут удалены безвозвратно; цитаты уже созданных '
+      + 'гипотез из этого источника перестанут открываться.')) return
+    try { await api.kbDelete(d.doc_id); load() }
+    catch (e) { setErr(String(e)) }
+  }
+
   const ask = async () => {
     if (!question.trim()) return
     setAsking(true); setAnswer(null)
@@ -293,9 +315,9 @@ export default function KB() {
               <button className="btn btn-primary btn-sm" disabled={uploading}
                 onClick={() => fileRef.current?.click()}>
                 <Icon name="upload" className="w-4 h-4" />
-                {uploading ? 'Индексирую…' : 'Загрузить PDF'}
+                {uploading ? 'Индексирую…' : 'Загрузить PDF/TXT'}
               </button>
-              <input ref={fileRef} type="file" accept=".pdf" className="hidden"
+              <input ref={fileRef} type="file" accept=".pdf,.txt" className="hidden"
                 onChange={e => e.target.files?.[0] && upload(e.target.files[0])} />
             </>
           }
@@ -304,28 +326,77 @@ export default function KB() {
             <table className="tbl">
               <thead>
                 <tr>
+                  <th className="w-8" title="Учитывать источник в поиске и цитатах"></th>
                   <th>Источник</th>
                   <th className="text-right">Стр.</th>
                   <th className="text-right">Чанков</th>
                   <th>Статус</th>
+                  <th className="w-8"></th>
                 </tr>
               </thead>
-              <tbody className="stagger">
-                {docs.map(d => (
-                  <tr key={d.doc_id}>
-                    <td className="max-w-xs truncate" title={d.source}>{d.source}</td>
-                    <td className="num text-right">{d.pages}</td>
-                    <td className="num text-right">{d.chunks}</td>
-                    <td><DocStatus d={d} /></td>
-                  </tr>
-                ))}
-                {docs.length === 0 &&
+              {docs.length > 0 && LANG_GROUPS.map(g => {
+                // неизвестный код языка не должен прятать документ — в «Русский»
+                const langOf = (d: KbDoc) =>
+                  LANG_GROUPS.some(x => x.key === d.lang) ? d.lang : 'ru'
+                const group = docs.filter(d => langOf(d) === g.key)
+                return (
+                  <tbody key={g.key} className="stagger">
+                    <tr className="bg-surface-2/60">
+                      <td colSpan={6} className="py-1.5">
+                        <span className="text-xs font-semibold uppercase tracking-wide text-muted">{g.label}</span>
+                        <span className="text-xs text-faint ml-2">{g.hint}</span>
+                        <span className="num text-xs text-faint ml-2">
+                          {group.filter(d => d.enabled !== false).length}/{group.length} активно
+                        </span>
+                      </td>
+                    </tr>
+                    {group.map(d => {
+                      const on = d.enabled !== false
+                      return (
+                        <tr key={d.doc_id} className={on ? '' : 'opacity-45'}>
+                          <td>
+                            <input type="checkbox" checked={on}
+                              className="accent-brand w-4 h-4 cursor-pointer align-middle"
+                              title={on ? 'Источник учитывается в поиске — снять, чтобы выключить'
+                                       : 'Источник выключен — не участвует в поиске и цитатах'}
+                              onChange={() => toggleDoc(d)} />
+                          </td>
+                          <td className="max-w-[13rem] truncate" title={d.source}>
+                            {d.source}
+                            {!on && <Badge tone="default">выключен</Badge>}
+                          </td>
+                          <td className="num text-right">{d.pages}</td>
+                          <td className="num text-right">{d.chunks}</td>
+                          <td><DocStatus d={d} /></td>
+                          <td>
+                            <button type="button"
+                              className="btn btn-ghost btn-sm text-danger px-1.5"
+                              title="Удалить источник из базы знаний"
+                              onClick={() => deleteDoc(d)}>
+                              <Icon name="trash" className="w-4 h-4" />
+                            </button>
+                          </td>
+                        </tr>
+                      )
+                    })}
+                    {group.length === 0 && (
+                      <tr>
+                        <td colSpan={6} className="py-2 text-xs text-faint">
+                          Источников на этом языке пока нет — загрузите PDF.
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                )
+              })}
+              {docs.length === 0 &&
+                <tbody>
                   <tr>
-                    <td colSpan={4} className="text-center py-8 text-faint">
+                    <td colSpan={6} className="text-center py-8 text-faint">
                       Загрузите PDF-книги — они станут источником цитат для гипотез
                     </td>
-                  </tr>}
-              </tbody>
+                  </tr>
+                </tbody>}
             </table>
           </div>
         </Panel>

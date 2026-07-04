@@ -273,7 +273,13 @@ def _project_flowsheet(pid: str, store: Store) -> tuple[str | None, dict | None]
         if got:
             _reports, meta = got
             factory = detect_factory(meta.get("source", ""), _reports[0].plant)
-    return factory, get_flowsheet(factory)
+    fs = get_flowsheet(factory)
+    if not fs and project:
+        # кастомная схема, оцифрованная из загрузки пользователя по линии
+        fs = get_flowsheet(project.plant)
+        if fs:
+            factory = project.plant
+    return factory, fs
 
 
 @router.get("/projects/{pid}/report")
@@ -419,13 +425,74 @@ def list_factories(store: Store = Depends(get_store)) -> list[dict]:
 
 
 @router.get("/factories/{factory}/flowsheet")
-def factory_flowsheet(factory: str) -> dict:
-    """Оцифрованная схема фабрики — текстовое представление в карточке линии."""
+def factory_flowsheet(factory: str, store: Store = Depends(get_store)) -> dict:
+    """Оцифрованная схема по ключу (фабрика кейса или линия с загруженной
+    схемой). status=processing — оцифровка загрузки ещё идёт (фронт поллит)."""
     from .flowsheet import get_flowsheet
+    row = store.get_line_flowsheet(factory)
+    if row and row.get("status") == "processing":
+        return {"factory": factory, "flowsheet": None, "status": "processing",
+                "source": "upload"}
+    if row and row.get("status") == "failed":
+        return {"factory": factory, "flowsheet": None, "status": "failed",
+                "source": "upload", "error": row.get("error") or ""}
     fs = get_flowsheet(factory)
     if not fs or not fs.get("nodes"):
         raise HTTPException(404, "схема этой фабрики не оцифрована")
-    return {"factory": factory, "flowsheet": fs}
+    return {"factory": factory, "flowsheet": fs, "status": "digitized",
+            "source": "upload" if fs.get("digitized_from_upload") else "case"}
+
+
+@router.post("/lines/{line_id}/flowsheet-image")
+async def upload_line_flowsheet(line_id: str, file: UploadFile,
+                                store: Store = Depends(get_store)) -> dict:
+    """Загрузка изображения схемы линии: OCR подписей + сборка структуры
+    FAST-моделью в фоне; результат учитывается в диагнозах и генерации."""
+    import threading
+    from .flowsheet import detect_factory
+    from .flowsheet_digitize import digitize_image
+    from .kb import ocr as kb_ocr
+    if not kb_ocr.available():
+        raise HTTPException(503, "оцифровка недоступна: нет ключа Yandex Vision")
+    line = store.get_line(line_id)
+    if not line:
+        raise HTTPException(404, "линия не найдена")
+    data = await file.read()
+    name = unicodedata.normalize("NFC", file.filename or "схема.png")
+    from .flowsheet import factories_available
+    factory = detect_factory(line.name, line.name)
+    if factory in factories_available():
+        raise HTTPException(409, f"схема фабрики «{factory}» уже оцифрована из "
+                                 "материалов кейса и выверена вручную — черновая "
+                                 "OCR-оцифровка её не заменяет")
+    key = line.id
+
+    # картинка — в общую галерею схем фабрики
+    from .config import STORAGE
+    import uuid as _uuid
+    dst = STORAGE / "factory_images"
+    dst.mkdir(parents=True, exist_ok=True)
+    img_id = _uuid.uuid4().hex[:10]
+    ext = name.rsplit(".", 1)[-1].lower() if "." in name else "png"
+    (dst / f"{img_id}.{ext}").write_bytes(data)
+    store.add_factory_image(key, name, "Загруженная схема (оцифровка)",
+                            str(dst / f"{img_id}.{ext}"))
+
+    store.save_line_flowsheet(key, None, source_image=name, status="processing")
+
+    def work():
+        try:
+            fs = digitize_image(data, llm_client)
+            store.save_line_flowsheet(key, fs, source_image=name, status="digitized")
+            log.info("Схема «%s» оцифрована: %d узлов", key, len(fs["nodes"]))
+        except Exception as e:  # noqa: BLE001 — статус ошибки должен дойти до UI
+            log.warning("Оцифровка схемы «%s» не удалась: %s", key, e)
+            store.save_line_flowsheet(key, None, source_image=name,
+                                      status="failed", error=str(e)[:300])
+
+    threading.Thread(target=work, daemon=True, name=f"digitize-{key}").start()
+    return {"key": key, "status": "processing",
+            "message": "OCR подписей и сборка структуры идут в фоне (~1-2 мин)"}
 
 
 @router.post("/factories/{factory}/images")

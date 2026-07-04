@@ -74,6 +74,17 @@ def _ocr_png(png: bytes) -> str:
     raise RuntimeError(f"Vision OCR не ответил после {RETRIES} попыток: {last}")
 
 
+def ocr_image(data: bytes) -> str:
+    """Одиночное изображение (png/jpg/webp/bmp) -> текст. Конвертация в PNG
+    через fitz — Vision получает единый mime, вход не ограничен форматом."""
+    doc = fitz.open(stream=io.BytesIO(data))
+    try:
+        png = doc[0].get_pixmap(dpi=DPI).tobytes("png")
+    finally:
+        doc.close()
+    return _ocr_png(png)
+
+
 def ocr_pdf(data: bytes, progress: Callable[[int, int], None] | None = None
             ) -> list[tuple[int, str]]:
     """Скан-PDF -> [(страница, текст)]. progress(done, total) — для статуса в UI."""

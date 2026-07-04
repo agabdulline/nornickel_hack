@@ -66,6 +66,10 @@ CREATE TABLE IF NOT EXISTS factory_images (
   id TEXT PRIMARY KEY, factory TEXT, filename TEXT, caption TEXT,
   path TEXT, created_at TEXT
 );
+CREATE TABLE IF NOT EXISTS line_flowsheets (
+  key TEXT PRIMARY KEY, payload_json TEXT, source_image TEXT,
+  status TEXT, error TEXT, updated_at TEXT
+);
 CREATE TABLE IF NOT EXISTS project_files (
   id TEXT PRIMARY KEY, project_id TEXT, filename TEXT, kind TEXT,
   text TEXT, status TEXT, path TEXT, created_at TEXT
@@ -783,6 +787,31 @@ class Store:
                         "INSERT INTO factory_images VALUES (?,?,?,?,?,?)",
                         (uuid.uuid4().hex[:10], factory, fn,
                          "Схема из материалов кейса", "", _now()))
+
+    # ---------- оцифрованные схемы линий (загрузка пользователя) ----------
+    def save_line_flowsheet(self, key: str, payload: dict | None,
+                            source_image: str = "", status: str = "processing",
+                            error: str = "") -> None:
+        with self._lock:
+            self._conn.execute(
+                "INSERT INTO line_flowsheets (key, payload_json, source_image, "
+                "status, error, updated_at) VALUES (?,?,?,?,?,?) "
+                "ON CONFLICT(key) DO UPDATE SET payload_json=excluded.payload_json, "
+                "source_image=excluded.source_image, status=excluded.status, "
+                "error=excluded.error, updated_at=excluded.updated_at",
+                (key, json.dumps(payload, ensure_ascii=False) if payload else None,
+                 source_image, status, error, _now()))
+            self._conn.commit()
+
+    def get_line_flowsheet(self, key: str) -> dict | None:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT * FROM line_flowsheets WHERE key=?", (key,)).fetchone()
+        if not row:
+            return None
+        d = dict(row)
+        d["payload"] = json.loads(d.pop("payload_json")) if d.get("payload_json") else None
+        return d
 
     def list_factory_images(self, factory: str | None = None) -> list[dict]:
         with self._lock:

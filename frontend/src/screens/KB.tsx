@@ -184,7 +184,7 @@ function LinesSection() {
                   ) : (
                     <>
                       {line.kind === 'производственная линия' && (
-                        <FlowsheetText lineName={line.name} />
+                        <FlowsheetText lineId={line.id} lineName={line.name} />
                       )}
                       <div>
                         <SectionLabel>Оборудование объекта</SectionLabel>

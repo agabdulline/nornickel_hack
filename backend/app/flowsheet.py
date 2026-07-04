@@ -45,9 +45,22 @@ def detect_factory(source_name: str, plant: str = "") -> str | None:
 
 
 def get_flowsheet(factory: str | None) -> dict | None:
+    """Схема по ключу. Выверенные схемы кейса (yaml) НЕПРИКОСНОВЕННЫ и всегда
+    в приоритете; черновая OCR-оцифровка из загрузки используется только для
+    линий, у которых схемы в кейсе нет (ключ — имя линии)."""
     if not factory:
         return None
-    return (pack().get("flowsheets") or {}).get(factory)
+    static = (pack().get("flowsheets") or {}).get(factory)
+    if static:
+        return static
+    try:
+        from .store import default_store
+        row = default_store().get_line_flowsheet(factory)
+        if row and row.get("status") == "digitized" and row.get("payload"):
+            return row["payload"]
+    except Exception:  # noqa: BLE001 — отсутствие БД не должно ломать статику
+        pass
+    return None
 
 
 def factories_available() -> list[str]:

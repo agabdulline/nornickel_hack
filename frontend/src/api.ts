@@ -177,8 +177,17 @@ export const api = {
   // ---------- схемы фабрик (БД) и материалы проекта ----------
   factories: () => j<FactoryInfo[]>(fetch('/api/factories')),
   factoryFlowsheet: (factory: string) =>
-    j<{ factory: string; flowsheet: FlowsheetData }>(
+    j<{ factory: string; flowsheet: FlowsheetData | null
+        status?: string; source?: string; error?: string }>(
       fetch(`/api/factories/${encodeURIComponent(factory)}/flowsheet`)),
+  lineFlowsheetUpload: (lineId: string, file: File) => {
+    const fd = new FormData()
+    fd.append('file', file)
+    return j<{ key: string; status: string }>(
+      fetch(`/api/lines/${encodeURIComponent(lineId)}/flowsheet-image`, {
+        method: 'POST', body: fd,
+      }))
+  },
   factoryImageUpload: (factory: string, file: File) => {
     const fd = new FormData()
     fd.append('file', file)

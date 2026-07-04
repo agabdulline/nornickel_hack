@@ -325,6 +325,58 @@ def test_translate_texts_and_quote_ru(tmp_path, monkeypatch):
     assert h.rationale[0].quote_ru
 
 
+def test_flowsheet_digitize_and_priority(tmp_path, monkeypatch):
+    """Оцифровка схемы: structure_from_text валидирует узлы/потоки; кастомная
+    схема в БД перекрывает статику кейса и отдаётся по ключу линии."""
+    import json as _json
+
+    import backend.app.flowsheet as fsmod
+    from backend.app.flowsheet_digitize import structure_from_text
+    from backend.app.store import Store
+
+    class FakeLLM:
+        enabled = True
+
+        def chat(self, messages, strong=False, json_mode=False):
+            return {"content": _json.dumps({
+                "nodes": [
+                    {"id": "mill1", "name": "Измельчение I стадии", "type": "grinding",
+                     "pct_solids": 70, "reagents": {"известь": 300}},
+                    {"id": "flot!", "name": "Основная флотация", "type": "неизвестно",
+                     "t_min": "12-16"},
+                    {"name": ""},  # мусор — отбрасывается
+                ],
+                "streams": [
+                    {"from": "mill1", "to": "flot", "kind": "flow"},
+                    {"from": "flot", "kind": "tails"},
+                    {"from": "чужой", "to": "mill1"},  # неизвестный узел — мимо
+                ],
+            }, ensure_ascii=False)}
+
+    fs = structure_from_text("Измельчение 70% тв, известь 300 г/т; флотация 12-16 мин",
+                             FakeLLM())
+    assert len(fs["nodes"]) == 2
+    assert fs["nodes"][0]["type"] == "grinding"
+    assert fs["nodes"][1]["type"] == "flotation", "тип восстановлен эвристикой по имени"
+    assert fs["nodes"][1]["id"] == "flot", "id очищен от недопустимых символов"
+    assert any(s["kind"] == "tails" for s in fs["streams"])
+    assert fs["digitized_from_upload"] is True
+
+    # приоритет: выверенная статика кейса НЕПРИКОСНОВЕННА, кастом — только
+    # для линий, у которых схемы в кейсе нет
+    store = Store(tmp_path / "fs.db")
+    monkeypatch.setattr(fsmod, "default_store", lambda: store, raising=False)
+    import backend.app.store as store_mod
+    monkeypatch.setattr(store_mod, "default_store", lambda: store)
+    store.save_line_flowsheet("НОФ", fs, status="digitized")
+    got = fsmod.get_flowsheet("НОФ")
+    assert got and not got.get("digitized_from_upload"), \
+        "статика кейса в приоритете — черновик её не перекрывает"
+    store.save_line_flowsheet("моя-линия-42", fs, status="digitized")
+    assert fsmod.get_flowsheet("моя-линия-42").get("digitized_from_upload"), \
+        "схема по ключу произвольной линии — из загрузки"
+
+
 def test_project_material_roundtrip(tmp_path):
     """Исследуемый материал проекта: не только хвосты — хранится и читается,
     у старых проектов дефолт «отвальные хвосты»."""

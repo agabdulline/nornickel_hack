@@ -181,7 +181,7 @@ def generate_hypotheses(report: TailingsReport, diag: DiagnosticsResult, *,
     if grounded_mock:
         _ground_mock_citations(hyps, kb_index)
     else:
-        _reground_citations(hyps, kb_index)
+        _reground_citations(hyps, kb_index, llm=llm)
     log.info("Генерация завершена: %d гипотез после дедупа/добора/капа (сырых от модели: %d)",
              len(hyps), n_raw)
     return hyps
@@ -278,36 +278,117 @@ def _repair_missing_directions(llm: LLMClient, base_prompt: str,
     return []
 
 
-def _reground_citations(hyps: list[Hypothesis], kb_index: KBIndex):
-    """Пере-заземление цитат живой генерации: цитата, которая не пройдёт verify
-    (нет чанка / текст не совпадает), заменяется дословным фрагментом лучшего
-    чанка ПОД ЭТУ гипотезу. Гипотеза без цитат получает одну."""
+REGROUND_SYSTEM = """Ты — научный редактор карточек гипотез обогатительной фабрики.
+Для каждой гипотезы выбери из предложенных фрагментов литературы ОДИН дословный
+отрывок (не длиннее 40 слов), который обосновывает ИМЕННО указанное вмешательство —
+тот же параметр или приём. Просто та же тема НЕ подходит: «в измельчённом продукте
+остаются сростки» не обосновывает «увеличить диаметр шаров»; текст про пользу
+крупной флотации не обосновывает замену насадок гидроциклона.
+Если ни один фрагмент не обосновывает вмешательство — верни null для этой гипотезы:
+отсутствие цитаты честнее нерелевантной.
+Отрывок копируй ДОСЛОВНО из текста фрагмента, без пересказа и правок.
+Ответ строго JSON: {"picks": [{"n": 0, "chunk_id": "...", "quote": "..."},
+{"n": 1, "chunk_id": null, "quote": null}]}"""
+
+
+def _semantic_pick(llm: LLMClient, needy: list[tuple[Hypothesis, list[dict]]]) -> dict:
+    """Один вызов FAST-модели: по каждой гипотезе — дословный обосновывающий
+    фрагмент из кандидатов или null. -> {i: (chunk_id, quote)}."""
+    payload = [{
+        "n": i,
+        "вмешательство": h.title,
+        "механизм": (h.mechanism or "")[:300],
+        "фрагменты": [{"chunk_id": c["chunk_id"], "текст": c["text"][:1100]}
+                      for c in cands],
+    } for i, (h, cands) in enumerate(needy)]
+    resp = llm.chat([{"role": "system", "content": REGROUND_SYSTEM},
+                     {"role": "user", "content": json.dumps(payload, ensure_ascii=False)}],
+                    strong=False, json_mode=True)
+    data = extract_json(resp["content"])
+    if isinstance(data, list):
+        data = {"picks": data}
+    out: dict[int, tuple[str, str]] = {}
+    for p in (data.get("picks") or []):
+        if isinstance(p, dict) and p.get("chunk_id") and p.get("quote"):
+            try:
+                out[int(p.get("n", -1))] = (str(p["chunk_id"]), str(p["quote"]))
+            except (TypeError, ValueError):
+                continue
+    return out
+
+
+def _reground_citations(hyps: list[Hypothesis], kb_index: KBIndex,
+                        llm: LLMClient | None = None,
+                        recheck_all: bool = False):
+    """Пере-заземление цитат живой генерации. Невалидная цитата (нет чанка /
+    текст не совпадает / источник выключен) заменяется ДОСЛОВНЫМ фрагментом,
+    который FAST-модель выбрала как обосновывающий именно это вмешательство
+    (смысловая проверка, не только текстовая). Если обосновывающего фрагмента
+    в корпусе нет — цитата не подставляется вовсе: отсутствие честнее мусора.
+    recheck_all=True — пере-оценить и формально валидные цитаты (репаир)."""
     import re as _re
     from rapidfuzz import fuzz
 
     def norm(s: str) -> str:
         return _re.sub(r"\s+", " ", (s or "").lower()).strip()
 
+    def verbatim_ok(quote: str, chunk: dict | None) -> bool:
+        return bool(chunk) and fuzz.partial_ratio(norm(quote), norm(chunk["text"])) > 75
+
+    good_by_h: dict[str, list[Citation]] = {}
+    needy: list[tuple[Hypothesis, list[dict]]] = []
     for h in hyps:
         good = []
         for cit in h.rationale:
             chunk = kb_index.get_chunk(cit.chunk_id) if cit.chunk_id else None
-            if chunk and fuzz.partial_ratio(norm(cit.quote), norm(chunk["text"])) > 75 \
-                    and kb_index.doc_enabled(chunk["doc_id"]):
+            if verbatim_ok(cit.quote, chunk) and kb_index.doc_enabled(chunk["doc_id"]):
                 good.append(cit)  # выключенный источник не проходит в новые цитаты
+        good_by_h[h.id] = good
         target = min(max(len(h.rationale), 1), 2)
-        if len(good) >= target:
+        if len(good) >= target and not recheck_all:
             h.rationale = good
             continue  # валидных цитат достаточно — не трогаем
-        for hit in kb_index.search(f"{h.title} {h.mechanism}", k=3):
-            if len(good) >= target:
-                break
-            if any(c.chunk_id == hit["chunk_id"] for c in good):
-                continue
-            quote = " ".join(hit["text"].split()[:35])
-            good.append(Citation(quote=quote, source=hit["source"],
-                                 page=hit["page"], chunk_id=hit["chunk_id"]))
-        h.rationale = good
+        cands = kb_index.search(f"{h.title} {h.mechanism}", k=5)
+        # при пере-оценке текущие чанки тоже кандидаты — модель может выбрать
+        # из них лучший фрагмент
+        for cit in good:
+            if not any(c["chunk_id"] == cit.chunk_id for c in cands):
+                chunk = kb_index.get_chunk(cit.chunk_id)
+                if chunk:
+                    cands.append({"chunk_id": chunk["chunk_id"], "text": chunk["text"],
+                                  "source": chunk["source"], "page": chunk["page_start"]})
+        needy.append((h, cands))
+
+    picks: dict[int, tuple[str, str]] = {}
+    if needy and getattr(llm, "enabled", False):
+        try:
+            picks = _semantic_pick(llm, needy)
+        except (LLMUnavailable, ValueError) as e:
+            log.warning("Смысловое пере-заземление недоступно (%s) — цитаты без замены", e)
+
+    replaced = 0
+    for i, (h, cands) in enumerate(needy):
+        pick = picks.get(i)
+        chosen: Citation | None = None
+        if pick:
+            cid, quote = pick
+            chunk = kb_index.get_chunk(cid)
+            if verbatim_ok(quote, chunk):  # модель могла пересказать — проверяем дословность
+                chosen = Citation(quote=" ".join(quote.split())[:400],
+                                  source=chunk["source"], page=chunk["page_start"],
+                                  chunk_id=cid)
+                replaced += 1
+            else:
+                log.info("Пере-заземление «%s»: фрагмент не дословный — отклонён", h.title[:50])
+        good = good_by_h[h.id]
+        if chosen and not any(c.chunk_id == chosen.chunk_id and
+                              norm(c.quote) == norm(chosen.quote) for c in good):
+            h.rationale = ([chosen] + good)[:2] if recheck_all else (good + [chosen])[:2]
+        else:
+            h.rationale = good
+    if needy:
+        log.info("Смысловое пере-заземление: %d/%d гипотез получили обосновывающую цитату",
+                 replaced, len(needy))
 
 
 def _postprocess(raw: dict, report: TailingsReport, diag: DiagnosticsResult,

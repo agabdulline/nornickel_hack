@@ -101,7 +101,7 @@ def test_repair_pass_adds_missing_directions(tmp_path):
     idx = KBIndex(root=tmp_path, use_dense=False)
     hyps = generate_hypotheses(report, diag, kb_index=idx, llm=fake, n_samples=1)
 
-    assert len(fake.calls) == 2, "основной сэмпл + добирающий вызов"
+    assert len(fake.calls) == 3, "основной сэмпл + добор направлений + пере-заземление цитат"
     assert "ДОБОР НЕПОКРЫТЫХ НАПРАВЛЕНИЙ" in fake.calls[1]
     assert "Замена футеровки мельниц МШЦ 4,5×6,0" in fake.calls[1], \
         "в добор передаются уже сгенерированные заголовки"
@@ -122,26 +122,71 @@ def test_cross_plant_examples_exclude_current():
     assert not (set(ex_tof) & own_tof)
 
 
-def test_reground_citations(tmp_path):
+def _nozzle_index(tmp_path):
     idx = KBIndex(root=tmp_path, use_dense=False)
     pages = [(5, "Уменьшение диаметра песковой насадки гидроциклона повышает "
                  "циркулирующую нагрузку и снижает крупность слива. " * 4)]
     idx.add_document("d1", "Справочник.pdf", pages, chunk_pages(pages, target=250))
+    return idx
 
+
+class _PickLLM:
+    """FAST-модель смыслового пере-заземления: отдаёт заданные picks."""
+    enabled = True
+
+    def __init__(self, picks):
+        self.picks = picks
+        self.calls = 0
+
+    def chat(self, messages, strong=False, json_mode=False):
+        self.calls += 1
+        return {"content": json.dumps({"picks": self.picks}, ensure_ascii=False)}
+
+
+def test_reground_keeps_valid_drops_fake_without_llm(tmp_path):
+    """Без LLM ничего не подставляется наобум: валидное остаётся, фейк уходит."""
+    idx = _nozzle_index(tmp_path)
     ok_cit = Citation(quote="Уменьшение диаметра песковой насадки гидроциклона повышает",
                       chunk_id=idx.chunks[0]["chunk_id"])
     fake_cit = Citation(quote="Выдуманная фраза о квантовой флотации", chunk_id="нет:1")
     h1 = _h("h1", "Замена насадок гидроциклонов", n_cit=0)
     h1.rationale = [ok_cit, fake_cit]
-    h2 = _h("h2", "Снижение крупности слива гидроциклонов", n_cit=0)  # вовсе без цитат
+    h2 = _h("h2", "Снижение крупности слива гидроциклонов", n_cit=0)
 
     _reground_citations([h1, h2], idx)
+    assert [c.quote[:20] for c in h1.rationale] == ["Уменьшение диаметра "]
+    assert h2.rationale == [], "нерелевантный чанк вслепую больше не подставляется"
 
-    # валидная цитата сохранена, фейковая заменена реальным чанком
-    assert h1.rationale[0].quote.startswith("Уменьшение диаметра")
-    assert all(idx.get_chunk(c.chunk_id) for c in h1.rationale)
-    # безцитатная гипотеза получила дословную цитату со страницей
-    assert h2.rationale and h2.rationale[0].page == 5
+
+def test_reground_semantic_pick_verbatim(tmp_path):
+    """FAST-модель выбирает обосновывающий фрагмент — он попадает в цитаты;
+    пересказанный (не дословный) фрагмент отклоняется."""
+    idx = _nozzle_index(tmp_path)
+    cid = idx.chunks[0]["chunk_id"]
+    h_ok = _h("h1", "Замена насадок гидроциклонов", n_cit=0)
+    h_bad = _h("h2", "Снижение крупности слива гидроциклонов", n_cit=0)
+
+    llm = _PickLLM([
+        {"n": 0, "chunk_id": cid,
+         "quote": "Уменьшение диаметра песковой насадки гидроциклона повышает "
+                  "циркулирующую нагрузку и снижает крупность слива."},
+        {"n": 1, "chunk_id": cid,
+         "quote": "Автор пишет, что маленькие насадки полезны для классификации."},
+    ])
+    _reground_citations([h_ok, h_bad], idx, llm=llm)
+
+    assert llm.calls == 1, "один батч-вызов на все гипотезы"
+    assert h_ok.rationale and h_ok.rationale[0].page == 5
+    assert h_bad.rationale == [], "пересказ не прошёл проверку дословности"
     from backend.app.hypotheses.verify import verify_citations
-    stats = verify_citations([h1, h2], idx)
-    assert stats["validity"] == 1.0, "после пере-заземления все цитаты верифицируемы"
+    stats = verify_citations([h_ok, h_bad], idx)
+    assert stats["validity"] == 1.0, "все оставшиеся цитаты дословны"
+
+
+def test_reground_null_pick_leaves_empty(tmp_path):
+    """Модель вернула null (нет обосновывающего фрагмента) — цитат нет, честно."""
+    idx = _nozzle_index(tmp_path)
+    h = _h("h1", "Магнитная сепарация надцелевого класса", n_cit=0)
+    llm = _PickLLM([{"n": 0, "chunk_id": None, "quote": None}])
+    _reground_citations([h], idx, llm=llm)
+    assert h.rationale == []

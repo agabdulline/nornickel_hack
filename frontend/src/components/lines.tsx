@@ -72,9 +72,11 @@ function RemoveBtn({ onClick, className = '' }: { onClick: (e: React.MouseEvent)
   )
 }
 
-/** Комбобокс «Фабрика/линия»: поиск по каталогу линий + инлайн-создание новой. */
-export function LineCombobox({ value, onSelect, placeholder }: {
+/** Комбобокс «Фабрика/линия»: поиск по каталогу линий. Создание новой линии
+ * (allowCreate) вынесено в «Базу знаний» — на главной оно отключено. */
+export function LineCombobox({ value, onSelect, placeholder, allowCreate = true }: {
   value: Line | null; onSelect: (line: Line) => void; placeholder?: string
+  allowCreate?: boolean
 }) {
   const [lines, setLines] = useState<Line[]>([])
   const [search, setSearch] = useState(value?.name ?? '')
@@ -143,37 +145,43 @@ export function LineCombobox({ value, onSelect, placeholder }: {
           {filtered.length === 0 && (
             <div className="px-3 py-2 text-faint">Ничего не найдено</div>
           )}
-          <div className="border-t border-line">
-            {!showCreate ? (
-              <button type="button"
-                className="w-full text-left px-3 py-2 text-brand hover:bg-brand-tint font-semibold flex items-center gap-1.5 transition-colors"
-                onClick={() => setShowCreate(true)}>
-                <Icon name="plus" className="w-3.5 h-3.5" /> добавить новую фабрику/лабораторию
-              </button>
-            ) : (
-              <div className="p-2.5 space-y-2">
-                <input className="input"
-                  placeholder="напр.: НОФ · медистые руды"
-                  value={newName} onChange={e => setNewName(e.target.value)}
-                  onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); createLine() } }} />
-                <div className="flex gap-3 text-sm">
-                  <label className="flex items-center gap-1.5">
-                    <input type="radio" style={BRAND_ACCENT} checked={newKind === 'производственная линия'}
-                      onChange={() => setNewKind('производственная линия')} /> Производственная линия
-                  </label>
-                  <label className="flex items-center gap-1.5">
-                    <input type="radio" style={BRAND_ACCENT} checked={newKind === 'лаборатория'}
-                      onChange={() => setNewKind('лаборатория')} /> Лаборатория / НИОКР
-                  </label>
+          {allowCreate ? (
+            <div className="border-t border-line">
+              {!showCreate ? (
+                <button type="button"
+                  className="w-full text-left px-3 py-2 text-brand hover:bg-brand-tint font-semibold flex items-center gap-1.5 transition-colors"
+                  onClick={() => setShowCreate(true)}>
+                  <Icon name="plus" className="w-3.5 h-3.5" /> добавить новую фабрику/лабораторию
+                </button>
+              ) : (
+                <div className="p-2.5 space-y-2">
+                  <input className="input"
+                    placeholder="напр.: НОФ · медистые руды"
+                    value={newName} onChange={e => setNewName(e.target.value)}
+                    onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); createLine() } }} />
+                  <div className="flex gap-3 text-sm">
+                    <label className="flex items-center gap-1.5">
+                      <input type="radio" style={BRAND_ACCENT} checked={newKind === 'производственная линия'}
+                        onChange={() => setNewKind('производственная линия')} /> Производственная линия
+                    </label>
+                    <label className="flex items-center gap-1.5">
+                      <input type="radio" style={BRAND_ACCENT} checked={newKind === 'лаборатория'}
+                        onChange={() => setNewKind('лаборатория')} /> Лаборатория / НИОКР
+                    </label>
+                  </div>
+                  <div className="flex gap-1.5">
+                    <button type="button" className="btn btn-primary btn-sm" disabled={busy || !newName.trim()}
+                      onClick={createLine}>Создать</button>
+                    <button type="button" className="btn btn-sm" onClick={() => setShowCreate(false)}>Отмена</button>
+                  </div>
                 </div>
-                <div className="flex gap-1.5">
-                  <button type="button" className="btn btn-primary btn-sm" disabled={busy || !newName.trim()}
-                    onClick={createLine}>Создать</button>
-                  <button type="button" className="btn btn-sm" onClick={() => setShowCreate(false)}>Отмена</button>
-                </div>
-              </div>
-            )}
-          </div>
+              )}
+            </div>
+          ) : (
+            <div className="border-t border-line px-3 py-2 text-xs text-faint">
+              Новые фабрики и линии добавляются в «Базе знаний».
+            </div>
+          )}
         </div>
       )}
     </div>

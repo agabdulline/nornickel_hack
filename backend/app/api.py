@@ -16,7 +16,8 @@ from .kb import search as kb_search
 from .kb.index import KBIndex, default_index
 from .kb.ingest import ingest_pdf
 from .llm import client as llm_client
-from .models import Hypothesis, Project, TailingsReport
+from .models import (Equipment, Hypothesis, Line, LineMaterial, Material, Project,
+                     ProjectConstraints, TailingsReport)
 from .parser.docx import parse_expert_hypotheses
 from .parser.recover import recover
 from .parser.xlsx import parse_workbook
@@ -37,16 +38,152 @@ def get_kb() -> KBIndex:
 # ---------- проекты ----------
 class ProjectIn(BaseModel):
     plant: str
+    name: str = ""
     goal: str = ""
     constraints: str = ""
     weights: dict | None = None
     factory: str | None = None   # оверрайд селектором; иначе авто по xlsx
+    project_constraints: ProjectConstraints | None = None
 
 
 @router.post("/projects")
 def create_project(body: ProjectIn, store: Store = Depends(get_store)) -> Project:
-    return store.create_project(body.plant, body.goal, body.constraints,
-                                body.weights, factory=body.factory)
+    return store.create_project(body.plant, body.goal, body.constraints, body.weights,
+                                factory=body.factory,
+                                project_constraints=body.project_constraints,
+                                name=body.name)
+
+
+# ---------- линии/лаборатории (мастер-данные, раздел «База знаний») ----------
+class LineIn(BaseModel):
+    name: str
+    kind: str = "производственная линия"
+    ownership: str = "в штате компании"
+
+
+class LinePatch(BaseModel):
+    name: str | None = None
+    kind: str | None = None
+    ownership: str | None = None
+
+
+@router.get("/lines")
+def list_lines(store: Store = Depends(get_store)) -> list[Line]:
+    return store.list_lines()
+
+
+@router.post("/lines")
+def create_line(body: LineIn, store: Store = Depends(get_store)) -> Line:
+    return store.create_line(body.name, body.kind, body.ownership)
+
+
+@router.patch("/lines/{line_id}")
+def update_line(line_id: str, body: LinePatch, store: Store = Depends(get_store)) -> Line:
+    line = store.update_line(line_id, body.name, body.kind, body.ownership)
+    if not line:
+        raise HTTPException(404, "линия не найдена")
+    return line
+
+
+# ---------- справочник материалов (переиспользуется в ограничениях проекта) ----------
+class MaterialIn(BaseModel):
+    name: str
+
+
+@router.get("/materials")
+def list_materials(store: Store = Depends(get_store)) -> list[Material]:
+    return store.list_materials()
+
+
+@router.post("/materials")
+def create_material(body: MaterialIn, store: Store = Depends(get_store)) -> Material:
+    return store.find_or_create_material(body.name)
+
+
+# ---------- сырьё линии ----------
+class LineMaterialIn(BaseModel):
+    line_id: str
+    name: str
+    quantity: float = 0.0
+    unit: str = "т"
+    material_id: str | None = None
+
+
+class LineMaterialPatch(BaseModel):
+    quantity: float | None = None
+    unit: str | None = None
+    name: str | None = None
+    material_id: str | None = None
+
+
+@router.get("/line-materials")
+def list_line_materials(line_id: str, store: Store = Depends(get_store)) -> list[LineMaterial]:
+    return store.list_line_materials(line_id)
+
+
+@router.post("/line-materials")
+def add_line_material(body: LineMaterialIn, store: Store = Depends(get_store)) -> LineMaterial:
+    return store.add_line_material(body.line_id, body.name, body.quantity, body.unit, body.material_id)
+
+
+@router.patch("/line-materials/{lm_id}")
+def update_line_material(lm_id: str, body: LineMaterialPatch,
+                         store: Store = Depends(get_store)) -> LineMaterial:
+    lm = store.update_line_material(lm_id, body.quantity, body.unit, body.name, body.material_id)
+    if not lm:
+        raise HTTPException(404, "запись о сырье не найдена")
+    return lm
+
+
+@router.delete("/line-materials/{lm_id}")
+def delete_line_material(lm_id: str, store: Store = Depends(get_store)) -> dict:
+    ok = store.delete_line_material(lm_id)
+    if not ok:
+        raise HTTPException(404, "запись о сырье не найдена")
+    return {"ok": True}
+
+
+# ---------- оборудование линии (раздел «Ограничения») ----------
+class EquipmentIn(BaseModel):
+    line_id: str
+    name: str
+    position: str = ""
+    category: str = ""
+    status: str = "в эксплуатации"
+
+
+class EquipmentPatch(BaseModel):
+    name: str | None = None
+    position: str | None = None
+    category: str | None = None
+    status: str | None = None
+
+
+@router.get("/equipment")
+def list_equipment(line_id: str, store: Store = Depends(get_store)) -> list[Equipment]:
+    return store.list_equipment(line_id)
+
+
+@router.post("/equipment")
+def add_equipment(body: EquipmentIn, store: Store = Depends(get_store)) -> Equipment:
+    return store.add_equipment(body.line_id, body.name, body.position,
+                               body.category, body.status)
+
+
+@router.patch("/equipment/{eq_id}")
+def update_equipment(eq_id: str, body: EquipmentPatch, store: Store = Depends(get_store)) -> Equipment:
+    eq = store.update_equipment(eq_id, body.name, body.position, body.category, body.status)
+    if not eq:
+        raise HTTPException(404, "оборудование не найдено")
+    return eq
+
+
+@router.delete("/equipment/{eq_id}")
+def delete_equipment(eq_id: str, store: Store = Depends(get_store)) -> dict:
+    ok = store.delete_equipment(eq_id)
+    if not ok:
+        raise HTTPException(404, "оборудование не найдено")
+    return {"ok": True}
 
 
 @router.get("/projects")
@@ -222,12 +359,14 @@ def generate(pid: str, body: GenerateIn, store: Store = Depends(get_store),
     history = [h.title for h in store.get_hypotheses(pid)]
     from .flowsheet import summarize_for_prompt, zero_reagent_hints
     factory, _fs = _project_flowsheet(pid, store)
+    project_equipment = project.project_constraints.equipment
     hyps = generate_hypotheses(
         report, diag, kb_index=kb, llm=llm_client,
         constraints=project.constraints, stoplist=project.stoplist,
         history_titles=history, excluded_areas=body.excluded_areas,
         flowsheet_summary=summarize_for_prompt(factory),
         reagent_hints=zero_reagent_hints(factory, kb_index=kb),
+        project_equipment=[e.model_dump() for e in project_equipment],
         n_samples=2)  # best-of-2: параллельные сэмплы + смысловой дедуп
     verify_citations(hyps, kb)
     prior = expert_titles_for_plant(report.plant) + \

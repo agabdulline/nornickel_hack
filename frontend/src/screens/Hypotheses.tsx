@@ -18,6 +18,7 @@ export default function Hypotheses() {
     { money: 0.4, capex: 0.25, risk: 0.2, novelty: 0.15 })
   const [areaFilter, setAreaFilter] = useState<string[]>([])
   const [noCapex, setNoCapex] = useState(false)
+  const [showMissingEquipment, setShowMissingEquipment] = useState(false)
   const [exclusions, setExclusions] = useState('')
   const [chunk, setChunk] = useState<{ id: string; quote: string } | null>(null)
 
@@ -35,11 +36,17 @@ export default function Hypotheses() {
     } catch (e) { setErr(String(e)) } finally { setBusy(false) }
   }
 
-  const visible = useMemo(() => (hyps ?? []).filter(h => {
+  const missingEquipment = (h: Hypothesis) => h.equipment.some(e => !e.present_on_plant)
+
+  const passesBaseFilters = useMemo(() => (hyps ?? []).filter(h => {
     if (areaFilter.length && !areaFilter.includes(h.process_area)) return false
     if (noCapex && String(h.feasibility?.capex).toLowerCase() === 'high') return false
     return true
   }), [hyps, areaFilter, noCapex])
+  const visible = useMemo(() =>
+    passesBaseFilters.filter(h => showMissingEquipment || !missingEquipment(h)),
+    [passesBaseFilters, showMissingEquipment])
+  const hiddenForEquipment = passesBaseFilters.length - visible.length
 
   const feedback = async (h: Hypothesis, action: 'accept' | 'reject') => {
     let reason = ''
@@ -98,6 +105,20 @@ export default function Hypotheses() {
       {/* карточки */}
       <div className="flex-1 space-y-3 min-w-0">
         {err && <ErrorBox error={err} />}
+        {hyps !== null && hyps.length > 0 && (
+          <div className="flex items-center gap-2 text-sm">
+            <label className="flex items-center gap-1.5 cursor-pointer select-none">
+              <input type="checkbox" checked={showMissingEquipment}
+                onChange={e => setShowMissingEquipment(e.target.checked)} />
+              Показывать гипотезы, требующие нового оборудования
+            </label>
+            {!showMissingEquipment && hiddenForEquipment > 0 && (
+              <span className="text-slate-400">
+                (скрыто {hiddenForEquipment} — нет оборудования на линии)
+              </span>
+            )}
+          </div>
+        )}
         {hyps === null && !err && <Spinner />}
         {hyps !== null && visible.length === 0 &&
           <EmptyBox text="Гипотез пока нет" hint="Нажмите «Сгенерировать гипотезы» слева" />}
@@ -122,6 +143,8 @@ function HypCard({ h, rank, onFeedback, onChunk }: {
     rejected: 'border-l-4 border-l-red-400 opacity-60',
   }
   const expertMatch = (h.novelty?.prior_matches?.length ?? 0) > 0
+  const missing = h.equipment.filter(e => !e.present_on_plant)
+  const present = h.equipment.filter(e => e.present_on_plant)
 
   return (
     <div className={`card ${statusStyle[h.status] ?? ''}`}>
@@ -134,6 +157,18 @@ function HypCard({ h, rank, onFeedback, onChunk }: {
             <span className="badge bg-slate-100 text-slate-700">{h.element}</span>
             <CapexBadge capex={h.feasibility?.capex} />
             <span className="badge bg-slate-100 text-slate-700">риски: {h.risks.length}</span>
+            {missing.length > 0 && (
+              <span className="badge bg-amber-100 text-amber-800">
+                ⚠ требует нового оборудования (CAPEX)
+              </span>
+            )}
+            {missing.length === 0 && present.length > 0 && (
+              <span className="badge bg-green-100 text-green-800">
+                ✓ {present.map(e => e.name).join(', ')} есть
+                {present.some(e => e.positions.length > 0) &&
+                  `, позиции ${present.flatMap(e => e.positions).join(', ')}`}
+              </span>
+            )}
             {h.diagnosis_rule && <span className="badge bg-slate-100 text-slate-600">[{h.diagnosis_rule}]</span>}
             {expertMatch &&
               <span className="badge bg-green-100 text-green-800">✓ Совпадает с гипотезой экспертов</span>}

@@ -43,6 +43,19 @@ def build_queries(diag: DiagnosticsResult) -> list[str]:
     return out
 
 
+def _line_equipment_ontology(project_equipment: list[dict]) -> list[dict]:
+    """Схлопывает построчный снимок оборудования проекта (раздел «Ограничения»,
+    несколько строк на одно имя — разные позиции) к виду онтологии домен-пака."""
+    by_name: dict[str, dict] = {}
+    for e in project_equipment:
+        name = e.get("name", "")
+        entry = by_name.setdefault(name, {"name": name, "type": e.get("category", ""), "positions": []})
+        pos = (e.get("position") or "").strip()
+        if pos and pos not in entry["positions"]:
+            entry["positions"].append(pos)
+    return list(by_name.values())
+
+
 def report_summary(report: TailingsReport) -> dict:
     return {
         "фабрика": report.plant,
@@ -66,6 +79,7 @@ def generate_hypotheses(report: TailingsReport, diag: DiagnosticsResult, *,
                         stoplist: list[str] | None = None,
                         history_titles: list[str] | None = None,
                         excluded_areas: list[str] | None = None,
+                        project_equipment: list[dict] | None = None,
                         flowsheet_summary: dict | None = None,
                         reagent_hints: list[dict] | None = None,
                         n_samples: int = 1) -> list[Hypothesis]:
@@ -90,8 +104,9 @@ def generate_hypotheses(report: TailingsReport, diag: DiagnosticsResult, *,
         # GEN_NO_FEWSHOT=1 — абляционный выключатель для eval-экспериментов
         few_shot = [] if os.environ.get("GEN_NO_FEWSHOT") == "1" \
             else cross_plant_examples(report.plant)
+        eq_for_prompt = _line_equipment_ontology(project_equipment) if project_equipment else equipment_list()
         prompt = build_user_prompt(report_summary(report), diagnoses_payload, chunks,
-                                   equipment_list(), constraints, stoplist,
+                                   eq_for_prompt, constraints, stoplist,
                                    history_titles, excluded_areas,
                                    intervention_menu=pack().get("intervention_menu"),
                                    flowsheet_summary=flowsheet_summary,
@@ -125,12 +140,14 @@ def generate_hypotheses(report: TailingsReport, diag: DiagnosticsResult, *,
 
     hyps: list[Hypothesis] = []
     for raw in raws:
-        hyps.extend(_postprocess(raw, report, diag, stoplist, excluded_areas))
+        hyps.extend(_postprocess(raw, report, diag, stoplist, excluded_areas,
+                                 project_equipment))
     hyps = _dedup_hypotheses(hyps)
 
     if not grounded_mock and os.environ.get("GEN_NO_REPAIR") != "1":
         extra = _repair_missing_directions(llm, prompt, hyps, report, diag,
-                                           stoplist, excluded_areas)
+                                           stoplist, excluded_areas,
+                                           project_equipment)
         if extra:
             hyps = _dedup_hypotheses(hyps + extra)
     hyps = _cap_diverse(hyps, cap=15)
@@ -210,7 +227,8 @@ REPAIR_SUFFIX = """
 def _repair_missing_directions(llm: LLMClient, base_prompt: str,
                                hyps: list[Hypothesis], report: TailingsReport,
                                diag: DiagnosticsResult, stoplist: list[str],
-                               excluded_areas: list[str]) -> list[Hypothesis]:
+                               excluded_areas: list[str],
+                               project_equipment: list[dict] | None = None) -> list[Hypothesis]:
     """Гарантия обхода intervention_menu: один добирающий вызов по направлениям,
     не закрытым основной генерацией (fuzzy их не разделяет — матчит модель)."""
     titles = "\n".join(f"- {h.title} [{h.element}]" for h in hyps)
@@ -223,7 +241,8 @@ def _repair_missing_directions(llm: LLMClient, base_prompt: str,
         if isinstance(data, list):
             data = {"hypotheses": data}
         if isinstance(data, dict):
-            extra = _postprocess(data, report, diag, stoplist, excluded_areas)
+            extra = _postprocess(data, report, diag, stoplist, excluded_areas,
+                                 project_equipment)
             log.info("Добор непокрытых направлений: +%d гипотез", len(extra))
             return extra
     except (LLMUnavailable, ValueError) as e:
@@ -263,10 +282,13 @@ def _reground_citations(hyps: list[Hypothesis], kb_index: KBIndex):
 
 
 def _postprocess(raw: dict, report: TailingsReport, diag: DiagnosticsResult,
-                 stoplist: list[str], excluded_areas: list[str]) -> list[Hypothesis]:
+                 stoplist: list[str], excluded_areas: list[str],
+                 project_equipment: list[dict] | None = None) -> list[Hypothesis]:
     """Валидация ответа модели + детерминированный расчёт эффекта (раздел 6)."""
     known_types = set(pack()["hypothesis_types"].keys())
-    ontology = {e["name"]: e for e in equipment_list()}
+    # онтология линии проекта (раздел «Ограничения») вместо общей по домен-паку, если задана
+    eq_source = _line_equipment_ontology(project_equipment) if project_equipment else equipment_list()
+    ontology = {e["name"]: e for e in eq_source}
     cells_by_key = {c.key: c for c in report.cells}
     diag_by_rule: dict[str, list[str]] = {}
     for d in diag.diagnoses:
@@ -335,6 +357,9 @@ def _postprocess(raw: dict, report: TailingsReport, diag: DiagnosticsResult,
         feas = h.get("feasibility") or {}
         if any(not e.present_on_plant for e in equipment):
             feas["capex"] = "high"
+            # оборудования нет на линии -> выше риск/сложность внедрения (та же
+            # формула ранжирования, что и для остальных гипотез — rank.py::_risk_norm)
+            feas["complexity"] = "high"
 
         plan = []
         for s in h.get("verification_plan", []) or []:

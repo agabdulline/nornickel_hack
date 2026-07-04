@@ -1,7 +1,38 @@
 // Зеркала pydantic-моделей бэкенда (без строгой полноты)
+export interface Equipment {
+  id: string; line_id: string; name: string; position: string;
+  category: string; status: 'в эксплуатации' | 'резерв' | 'выведено';
+}
+
+export type LineKind = 'производственная линия' | 'лаборатория';
+export type LineOwnership = 'в штате компании' | 'внешний подрядчик/партнёр';
+
+export interface Line {
+  id: string; name: string; kind: LineKind; ownership: LineOwnership;
+}
+
+export interface Material {
+  id: string; name: string;
+}
+
+// свободная строка — стандартный список предлагается в UI (см. STANDARD_UNITS
+// в components/lines.tsx), но «своя единица…» допускает произвольный текст
+export type MaterialUnit = string;
+
+export interface LineMaterial {
+  id: string; line_id: string; material_id: string; name: string;
+  quantity: number; unit: MaterialUnit;
+}
+
+export interface ProjectConstraints {
+  equipment: Equipment[];
+  materials: LineMaterial[];
+}
+
 export interface Project {
-  id: string; plant: string; goal: string; constraints: string;
+  id: string; name: string; plant: string; goal: string; constraints: string;
   created_at: string; weights: Record<string, number>; stoplist: string[];
+  project_constraints?: ProjectConstraints;
   has_report?: boolean; hypotheses_count?: number;
 }
 

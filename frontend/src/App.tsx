@@ -3,13 +3,71 @@ import {
   HashRouter, Link, NavLink, Navigate, Route, Routes, useParams,
 } from 'react-router-dom'
 import { api } from './api'
-import type { Project } from './types'
+import type { Line, Project, ProjectConstraints } from './types'
 import ChatPanel from './components/ChatPanel'
+import { EquipmentEditor, LineCombobox, MaterialsEditor, NO_OBJECT_ID } from './components/lines'
 import Report from './screens/Report'
 import LossMap from './screens/LossMap'
 import Hypotheses from './screens/Hypotheses'
 import ExportScreen from './screens/Export'
 import KB from './screens/KB'
+
+function emptyConstraints(): ProjectConstraints {
+  return { equipment: [], materials: [] }
+}
+
+/** Название проекта по умолчанию: "{линия} · QN YYYY". */
+function defaultProjectName(lineName: string): string {
+  const d = new Date()
+  const q = Math.floor(d.getMonth() / 3) + 1
+  return `${lineName} · Q${q} ${d.getFullYear()}`
+}
+
+/** Блок «Ограничения»: оборудование и сырьё линии (write-through), нормативка.
+ *
+ * Развилка не «линия/лаборатория» — у обеих есть своё оборудование — а
+ * «объект выбран vs без привязки к объекту»: во втором случае площадка ещё
+ * не определена и ограничения по оборудованию/сырью не применяются вовсе. */
+function ConstraintsSection({ line, value, onChange }: {
+  line: Line; value: ProjectConstraints
+  onChange: (v: ProjectConstraints) => void
+}) {
+  const noObject = line.id === NO_OBJECT_ID
+
+  useEffect(() => {
+    if (noObject) { onChange({ ...value, equipment: [], materials: [] }); return }
+    let live = true
+    Promise.all([api.equipmentForLine(line.id), api.lineMaterials(line.id)])
+      .then(([equipment, materials]) => {
+        if (!live) return
+        onChange({ ...value, equipment, materials })
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+      }).catch(() => {})
+    return () => { live = false }
+    // подтягиваем каталог только при смене линии — value намеренно не в зависимостях
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [line.id, noObject])
+
+  return (
+    <div className="space-y-3 pt-3 border-t border-slate-100">
+      <h3 className="font-semibold text-sm text-slate-700">Ограничения</h3>
+
+      {noObject ? (
+        <div className="text-sm text-slate-400">
+          Площадка не выбрана — ограничения по оборудованию и сырью не применяются,
+          гипотезы будут теоретическими.
+        </div>
+      ) : (
+        <>
+          <EquipmentEditor lineId={line.id} value={value.equipment}
+            onChange={equipment => onChange({ ...value, equipment })} />
+          <MaterialsEditor lineId={line.id} value={value.materials}
+            onChange={materials => onChange({ ...value, materials })} />
+        </>
+      )}
+    </div>
+  )
+}
 
 const STEPS = [
   { path: 'report', label: '1 · Данные' },
@@ -32,7 +90,7 @@ function ProjectLayout() {
           <Link to="/" className="font-bold text-teal-800 whitespace-nowrap">
             ⚙ Фабрика гипотез
           </Link>
-          <span className="text-sm text-slate-500 truncate">{project?.plant ?? '…'}</span>
+          <span className="text-sm text-slate-500 truncate">{(project?.name || project?.plant) ?? '…'}</span>
           <nav className="flex gap-1 ml-4">
             {STEPS.map(s => (
               <NavLink key={s.path} to={`/p/${pid}/${s.path}`}
@@ -69,17 +127,29 @@ function ProjectLayout() {
 
 function Home() {
   const [projects, setProjects] = useState<Project[]>([])
-  const [plant, setPlant] = useState('НОФ · вкрапленные руды')
+  const [name, setName] = useState('')
+  const [line, setLine] = useState<Line | null>(null)
   const [goal, setGoal] = useState('Снижение потерь Ni и Cu в отвальных хвостах')
   const [factory, setFactory] = useState('')   // '' = авто-определение по xlsx
+  const [constraints, setConstraints] = useState<ProjectConstraints>(emptyConstraints())
   const [err, setErr] = useState('')
 
   const load = () => api.projects().then(setProjects).catch(e => setErr(String(e)))
   useEffect(() => { load() }, [])
 
+  const selectLine = (l: Line) => {
+    setLine(l)
+    setConstraints(emptyConstraints())
+  }
+
   const create = async () => {
+    if (!line) { setErr('Выберите фабрику/линию'); return }
     try {
-      const p = await api.createProject({ plant, goal, factory: factory || undefined })
+      const finalName = name.trim() || defaultProjectName(line.name)
+      const p = await api.createProject({
+        plant: line.id, name: finalName, goal,
+        project_constraints: constraints, factory: factory || undefined,
+      })
       location.hash = `#/p/${p.id}/report`
     } catch (e) { setErr(String(e)) }
   }
@@ -96,13 +166,13 @@ function Home() {
         <div className="card p-4 space-y-3">
           <h2 className="font-semibold text-lg">Новый проект</h2>
           <div className="grid grid-cols-2 gap-3">
-            <label className="text-sm">Фабрика / линия
-              <input className="mt-1 w-full border border-slate-300 rounded px-2 py-1.5"
-                value={plant} onChange={e => setPlant(e.target.value)} />
+            <label className="text-sm">Название проекта
+              <input className="mt-1 w-full border border-slate-300 rounded px-2 py-1.5 placeholder:text-slate-400"
+                placeholder={line ? defaultProjectName(line.name) : 'напр.: НОФ · вкрапленные руды · Q3 2026'}
+                value={name} onChange={e => setName(e.target.value)} />
             </label>
-            <label className="text-sm">Цель
-              <input className="mt-1 w-full border border-slate-300 rounded px-2 py-1.5"
-                value={goal} onChange={e => setGoal(e.target.value)} />
+            <label className="text-sm">Фабрика / линия
+              <LineCombobox value={line} onSelect={selectLine} />
             </label>
             <label className="text-sm">Схема фабрики (регламент)
               <select className="mt-1 w-full border border-slate-300 rounded px-2 py-1.5 bg-white"
@@ -120,6 +190,15 @@ function Home() {
               </button>
             </div>
           </div>
+          <label className="text-sm block">Цель
+            <input className="mt-1 w-full border border-slate-300 rounded px-2 py-1.5"
+              value={goal} onChange={e => setGoal(e.target.value)} />
+          </label>
+
+          {line && (
+            <ConstraintsSection line={line} value={constraints} onChange={setConstraints} />
+          )}
+
           <button className="btn btn-primary" onClick={create}>Создать проект</button>
           {err && <div className="text-sm text-red-600">{err}</div>}
         </div>
@@ -132,7 +211,7 @@ function Home() {
               <Link key={p.id} to={`/p/${p.id}/report`}
                 className="flex items-center justify-between py-2 hover:bg-slate-50 px-2 -mx-2 rounded">
                 <div>
-                  <div className="font-medium">{p.plant}</div>
+                  <div className="font-medium">{p.name || p.plant}</div>
                   <div className="text-xs text-slate-500">{p.goal}</div>
                 </div>
                 <div className="text-xs text-slate-400 num">{p.created_at?.slice(0, 10)}</div>

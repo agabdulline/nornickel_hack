@@ -107,67 +107,117 @@ def build_roadmap(hypotheses: list[Hypothesis], start: date | None = None,
     return items
 
 
-def validate_schedule(items: list[RoadmapItem], lab_capacity: int | None = None) -> list[str]:
-    """Конфликты расписания: пересечения ресурсов и нарушение порядка стадий."""
+def find_resource_conflicts(items: list[RoadmapItem], lab_capacity: int | None = None,
+                            ) -> list[tuple[RoadmapItem, RoadmapItem, str]]:
+    """Пары стадий, превышающих ёмкость общего ресурса (для форс-сдвига и подсветки)."""
     cfg = pack().get("roadmap", {})
     lab_capacity = lab_capacity or int(cfg.get("lab_capacity", 2))
-    errors: list[str] = []
-
     by_res: dict[str, list[RoadmapItem]] = {}
     for it in items:
         by_res.setdefault(it.resource or "", []).append(it)
-
+    pairs: list[tuple[RoadmapItem, RoadmapItem, str]] = []
+    seen: set[tuple[str, str]] = set()
     for res, lst in by_res.items():
         cap = lab_capacity if res == "лаборатория" else 1
-        for i, a in enumerate(lst):
+        for a in lst:
             a_s, a_e = date.fromisoformat(a.start), date.fromisoformat(a.end)
             concurrent = [b for b in lst if b is not a and _overlaps(
                 a_s, a_e, date.fromisoformat(b.start), date.fromisoformat(b.end))]
             if len(concurrent) + 1 > cap:
-                other = concurrent[0]
-                errors.append(f"конфликт ресурса «{res}»: {a.id} пересекается с {other.id}")
+                for b in concurrent:
+                    key = tuple(sorted((a.id, b.id)))
+                    if key not in seen:
+                        seen.add(key)
+                        pairs.append((a, b, res))
+    return pairs
 
+
+def find_order_violations(items: list[RoadmapItem]) -> list[str]:
+    """Стадия начинается раньше завершения предшественника (жёсткое ограничение)."""
     by_id = {it.id: it for it in items}
+    errs: list[str] = []
     for it in items:
         for dep in it.depends_on:
             d = by_id.get(dep)
             if d and date.fromisoformat(it.start) < date.fromisoformat(d.end):
-                errors.append(f"стадия {it.id} начинается раньше завершения {dep}")
-    # дубли не нужны
-    seen = set()
-    out = []
-    for e in errors:
-        key = "".join(sorted(e))
-        if key not in seen:
-            seen.add(key)
-            out.append(e)
-    return out
+                errs.append(f"«{STAGE_LABELS.get(it.stage, it.stage)}» начинается раньше "
+                            f"завершения «{STAGE_LABELS.get(d.stage, d.stage)}»")
+    return errs
 
 
-def move_item(items: list[RoadmapItem], item_id: str, new_start: date) -> tuple[bool, str]:
-    """Ручной сдвиг стадии (PATCH). Сдвигает стадию и все последующие стадии
-    той же гипотезы; при конфликте — (False, причина), список не меняется."""
+def validate_schedule(items: list[RoadmapItem], lab_capacity: int | None = None) -> list[str]:
+    """Все нарушения расписания (ресурсы + порядок стадий) — для тестов/диагностики."""
+    errs = [f"конфликт ресурса «{res}»: {a.id} пересекается с {b.id}"
+            for a, b, res in find_resource_conflicts(items, lab_capacity)]
+    errs += find_order_violations(items)
+    return errs
+
+
+def _it_label(it: RoadmapItem) -> str:
+    return f"{it.hypothesis_title} · {STAGE_LABELS.get(it.stage, it.stage)}"
+
+
+def _apply_conflict_flags(items: list[RoadmapItem],
+                          pairs: list[tuple[RoadmapItem, RoadmapItem, str]]) -> None:
+    """Проставляет manual_conflict/conflict_with по актуальным пересечениям ресурсов."""
+    for it in items:
+        it.manual_conflict = False
+        it.conflict_with = []
+    for a, b, _res in pairs:
+        for x, y in ((a, b), (b, a)):
+            x.manual_conflict = True
+            if _it_label(y) not in x.conflict_with:
+                x.conflict_with.append(_it_label(y))
+
+
+def move_item(items: list[RoadmapItem], item_id: str, new_start: date,
+              force: bool = False) -> tuple[bool, str, str]:
+    """Ручной сдвиг стадии (PATCH): двигает стадию и все последующие стадии той же
+    гипотезы. Возвращает (ok, kind, message), kind ∈ ""|"resource"|"order"|"past"|"notfound".
+
+    Ресурсный конфликт можно ПРИНЯТЬ (force=True): сдвиг применяется, а пересекающиеся
+    стадии помечаются manual_conflict. Нарушение порядка стадий и планирование раньше
+    сегодня — жёсткие, force не помогает. Ранее принятые конфликты не блокируют новые
+    (в т.ч. непересекающиеся) сдвиги."""
     by_id = {it.id: it for it in items}
     target = by_id.get(item_id)
     if not target:
-        return False, "стадия не найдена"
+        return False, "notfound", "стадия не найдена"
 
+    prior = {tuple(sorted((a.id, b.id))) for a, b, _ in find_resource_conflicts(items)}
     old = [(it.start, it.end) for it in items]
     delta = new_start - date.fromisoformat(target.start)
 
-    chain = [it for it in items if it.hypothesis_id == target.hypothesis_id]
-    chain.sort(key=lambda it: it.start)
-    started = False
+    chain = sorted((it for it in items if it.hypothesis_id == target.hypothesis_id),
+                   key=lambda it: it.start)
+    started, moved = False, []
     for it in chain:
         if it.id == item_id:
             started = True
         if started:
             it.start = (date.fromisoformat(it.start) + delta).isoformat()
             it.end = (date.fromisoformat(it.end) + delta).isoformat()
+            moved.append(it)
 
-    errors = validate_schedule(items)
-    if errors:
+    def revert() -> None:
         for it, (s, e) in zip(items, old):
             it.start, it.end = s, e
-        return False, "; ".join(errors[:3])
-    return True, ""
+
+    if any(date.fromisoformat(it.start) < date.today() for it in moved):
+        revert()
+        return False, "past", "нельзя планировать стадию раньше сегодня"
+
+    order = find_order_violations(items)
+    if order:
+        revert()
+        return False, "order", order[0]
+
+    pairs = find_resource_conflicts(items)
+    introduced = [p for p in pairs if tuple(sorted((p[0].id, p[1].id))) not in prior]
+    if introduced and not force:
+        a, b, res = introduced[0]
+        revert()
+        return False, "resource", f"конфликт ресурса «{res}»: «{_it_label(a)}» пересекается с «{_it_label(b)}»"
+
+    _apply_conflict_flags(items, pairs)
+    return True, ("resource" if pairs else ""), ""

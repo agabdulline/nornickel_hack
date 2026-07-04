@@ -539,7 +539,8 @@ def roadmap_get(pid: str, store: Store = Depends(get_store)) -> list[dict]:
 
 
 class RoadmapPatch(BaseModel):
-    start: str  # ISO-дата
+    start: str          # ISO-дата
+    force: bool = False  # принять ресурсный конфликт и всё равно сдвинуть
 
 
 @router.patch("/roadmap/items/{item_id}")
@@ -560,9 +561,10 @@ def roadmap_patch(item_id: str, body: RoadmapPatch,
         new_start = _date.fromisoformat(body.start)
     except ValueError:
         raise HTTPException(422, "start: ожидается ISO-дата YYYY-MM-DD")
-    ok, reason = move_item(items, item_id, new_start)
+    ok, kind, reason = move_item(items, item_id, new_start, force=body.force)
     if not ok:
-        raise HTTPException(409, f"сдвиг невозможен: {reason}")
+        # detail — объект: фронт по kind решает, предлагать ли «принять конфликт»
+        raise HTTPException(409, detail={"kind": kind, "message": reason})
     store.save_roadmap(project_id, [it.model_dump() for it in items])
     return {"items": [it.model_dump() for it in items]}
 

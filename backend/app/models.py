@@ -212,7 +212,9 @@ class RoadmapItem(BaseModel):
     resource: str | None = None
     gate_criterion: str | None = None
     depends_on: list[str] = Field(default_factory=list)
-    shifted_reason: str | None = None            # "ждёт мельницу 5-3"
+    shifted_reason: str | None = None            # "ждёт мельницу 5-3" (авто-сдвиг планировщика)
+    manual_conflict: bool = False                # стадия помещена в принятый конфликт вручную
+    conflict_with: list[str] = Field(default_factory=list)  # с какими стадиями пересекается
 
 
 class ChatReference(BaseModel):

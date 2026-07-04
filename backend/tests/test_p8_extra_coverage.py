@@ -90,14 +90,14 @@ def test_move_before_dependency_rejected():
     items = build_roadmap([_h("hyp-x", "liner", 0.9)], start=date(2026, 7, 6))
     lab = next(i for i in items if i.stage == "lab")
     pilot = next(i for i in items if i.stage == "pilot")
-    ok, reason = move_item(items, pilot.id, date.fromisoformat(lab.start))
-    assert ok is False
+    ok, kind, reason = move_item(items, pilot.id, date.fromisoformat(lab.start))
+    assert ok is False and kind == "order"
     assert "раньше завершения" in reason
 
 
 def test_move_item_unknown_id():
     items = build_roadmap([_h("hyp-x", "liner", 0.9)], start=date(2026, 7, 6))
-    ok, reason = move_item(items, "нет-такой:lab", date(2026, 8, 1))
+    ok, _kind, reason = move_item(items, "нет-такой:lab", date(2026, 8, 1))
     assert ok is False and "не найдена" in reason
 
 

@@ -128,6 +128,7 @@ export interface RoadmapItem {
   stage: 'lab' | 'pilot' | 'rollout'; start: string; end: string;
   resource: string | null; gate_criterion: string | null;
   depends_on: string[]; shifted_reason: string | null;
+  manual_conflict?: boolean; conflict_with?: string[];
 }
 
 export interface ChatReference { type: 'rule' | 'cell' | 'hypothesis' | 'chunk'; id: string }

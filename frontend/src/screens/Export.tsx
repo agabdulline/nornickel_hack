@@ -1,8 +1,8 @@
-import { useEffect, useMemo, useState, type CSSProperties } from 'react'
+import { useEffect, useMemo, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from 'react'
 import { useParams } from 'react-router-dom'
 import { api, fmt, fxLabel, fxReady } from '../api'
 import type { Hypothesis, RoadmapItem } from '../types'
-import { ErrorBox, Icon, PageHeader, Panel, SectionLabel, Segmented, Spinner } from '../components/common'
+import { ErrorBox, Icon, Modal, PageHeader, Panel, SectionLabel, Segmented, Spinner } from '../components/common'
 
 export default function ExportScreen() {
   const { pid = '' } = useParams()
@@ -131,10 +131,25 @@ const STAGE_LABEL: Record<string, string> = {
   lab: 'лаборатория', pilot: 'ОПИ', rollout: 'тираж',
 }
 
+// геометрия Ганта (даты — day-granular, работаем в UTC-полдне, чтобы часовой пояс
+// не сдвигал дни при отправке PATCH)
+const PXW = 30            // px на неделю
+const PAD_L_W = 2         // недели слева — чтобы линия «сегодня» не липла к краю
+const PAD_R_W = 5         // недели справа — запас на будущее
+const DAY = 864e5, WEEK = 7 * DAY
+const parseDay = (s: string) => { const [y, m, d] = s.split('-').map(Number); return Date.UTC(y, m - 1, d, 12) }
+const toISO = (ms: number) => new Date(ms).toISOString().slice(0, 10)
+const ruDate = (s: string) =>
+  new Date(parseDay(s)).toLocaleDateString('ru-RU', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' })
+
 function RoadmapTab({ pid, hyps }: { pid: string; hyps: Hypothesis[] }) {
   const [items, setItems] = useState<RoadmapItem[] | null>(null)
   const [err, setErr] = useState('')
   const [open, setOpen] = useState<string | null>(null)
+  // диалог принятия ресурсного конфликта (пункт 4)
+  const [conflict, setConflict] = useState<{ itemId: string; start: string; message: string } | null>(null)
+  // живой драг: какую гипотезу и на сколько недель тянем
+  const [drag, setDrag] = useState<{ hid: string; fromStart: number; deltaW: number } | null>(null)
 
   useEffect(() => { api.roadmap(pid).then(setItems).catch(() => setItems([])) }, [pid])
 
@@ -144,32 +159,81 @@ function RoadmapTab({ pid, hyps }: { pid: string; hyps: Hypothesis[] }) {
     catch (e) { setErr(String(e)) }
   }
 
-  const move = async (it: RoadmapItem, weeks: number) => {
-    const d = new Date(it.start)
-    d.setDate(d.getDate() + weeks * 7)
+  // единая точка сдвига: force=false → при ресурсном конфликте открываем диалог;
+  // жёсткие отказы (порядок стадий / раньше сегодня) показываем как ошибку.
+  const doMove = async (itemId: string, startISO: string, force = false) => {
     setErr('')
     try {
-      const res = await api.roadmapMove(it.id, d.toISOString().slice(0, 10))
-      setItems(res.items)
-    } catch (e) { setErr(String(e)) }
+      const res = await api.roadmapMove(itemId, startISO, force)
+      setItems(res.items); setConflict(null)
+    } catch (e) {
+      const kind = (e as { kind?: string }).kind
+      const message = (e as Error).message.replace('Error: ', '')
+      if (kind === 'resource' && !force) setConflict({ itemId, start: startISO, message })
+      else setErr(message)
+    }
   }
 
-  const { t0, weeks } = useMemo(() => {
-    if (!items?.length) return { t0: new Date(), weeks: 1 }
-    const starts = items.map(i => +new Date(i.start))
-    const ends = items.map(i => +new Date(i.end))
-    const t0 = new Date(Math.min(...starts))
-    const weeks = Math.max(1, Math.ceil((Math.max(...ends) - +t0) / (7 * 864e5)))
-    return { t0, weeks }
-  }, [items])
+  const now = new Date()
+  const today0 = Date.UTC(now.getFullYear(), now.getMonth(), now.getDate(), 12)
+
+  const { axisStart, trackW, months } = useMemo(() => {
+    const its = items ?? []
+    const starts = its.map(i => parseDay(i.start))
+    const ends = its.map(i => parseDay(i.end))
+    const minS = Math.min(today0, ...(starts.length ? starts : [today0]))
+    const maxE = Math.max(today0 + 8 * WEEK, ...(ends.length ? ends : [today0]))
+    const axisStart = minS - PAD_L_W * WEEK
+    const axisEnd = maxE + PAD_R_W * WEEK
+    const totalW = Math.max(1, Math.ceil((axisEnd - axisStart) / WEEK))
+    const mm: { x: number; label: string }[] = []
+    const first = new Date(axisStart)
+    let cur = Date.UTC(first.getUTCFullYear(), first.getUTCMonth(), 1, 12)
+    while (cur <= axisEnd) {
+      const cx = ((cur - axisStart) / WEEK) * PXW
+      if (cx >= 0) mm.push({ x: cx,
+        label: new Date(cur).toLocaleDateString('ru-RU', { month: 'short', timeZone: 'UTC' }) })
+      const d = new Date(cur)
+      cur = Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 1, 12)
+    }
+    return { axisStart, trackW: totalW * PXW, months: mm }
+  }, [items, today0])
 
   if (items === null) return <Spinner />
 
   const accepted = hyps.filter(h => h.status === 'accepted' || h.status === 'testing')
   const byHyp = new Map<string, RoadmapItem[]>()
   items.forEach(i => byHyp.set(i.hypothesis_id, [...(byHyp.get(i.hypothesis_id) ?? []), i]))
-  const wk = (d: string) => (+new Date(d) - +t0) / (7 * 864e5)
-  const todayWk = (+new Date() - +t0) / (7 * 864e5)
+  const xOf = (s: string) => ((parseDay(s) - axisStart) / WEEK) * PXW
+  const todayX = ((today0 - axisStart) / WEEK) * PXW
+
+  // ±неделя стрелкой (назад — не раньше сегодня)
+  const nudge = (it: RoadmapItem, dir: 1 | -1) => {
+    const ms = parseDay(it.start) + dir * WEEK
+    if (ms < today0) return
+    doMove(it.id, toISO(ms))
+  }
+
+  // drag сегмента: тянем стадию и все последующие той же гипотезы; клип «не раньше сегодня»
+  const startDrag = (e: ReactPointerEvent<HTMLDivElement>, it: RoadmapItem) => {
+    e.preventDefault()
+    const px0 = e.clientX
+    const itStart = parseDay(it.start)
+    const minDeltaW = Math.ceil((today0 - itStart) / WEEK)
+    const clamp = (dw: number) => Math.max(dw, minDeltaW)
+    setDrag({ hid: it.hypothesis_id, fromStart: itStart, deltaW: 0 })
+    const onMove = (ev: PointerEvent) =>
+      setDrag(d => d ? { ...d, deltaW: clamp(Math.round((ev.clientX - px0) / PXW)) } : d)
+    const onUp = (ev: PointerEvent) => {
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerup', onUp)
+      setDrag(null)
+      const dw = clamp(Math.round((ev.clientX - px0) / PXW))
+      if (dw !== 0) doMove(it.id, toISO(itStart + dw * WEEK))
+    }
+    window.addEventListener('pointermove', onMove)
+    window.addEventListener('pointerup', onUp)
+  }
 
   return (
     <div className="space-y-3">
@@ -194,18 +258,14 @@ function RoadmapTab({ pid, hyps }: { pid: string; hyps: Hypothesis[] }) {
 
       {items.length > 0 && (
         <div className="card p-3 overflow-x-auto">
-          {/* шкала */}
-          <div className="ml-64 relative h-6 border-b mb-1" style={{ minWidth: weeks * 28, borderColor: 'var(--c-line-strong)' }}>
-            {Array.from({ length: Math.ceil(weeks / 4) + 1 }, (_, i) => (
-              <div key={i} className="absolute text-xs num text-faint" style={{ left: i * 4 * 28 }}>
-                {new Date(+t0 + i * 4 * 7 * 864e5).toLocaleDateString('ru-RU',
-                  { month: 'short', day: 'numeric' })}
-              </div>
+          {/* ось месяцев */}
+          <div className="ml-64 relative h-5 mb-1" style={{ minWidth: trackW }}>
+            {months.map((m, i) => (
+              <div key={i} className="absolute top-0 h-full text-[11px] num text-faint pl-1 border-l"
+                style={{ left: m.x, borderColor: 'var(--c-line)' }}>{m.label}</div>
             ))}
-            {todayWk >= 0 && todayWk <= weeks && (
-              <div className="absolute top-0 bottom-0 w-0.5" title="сегодня"
-                style={{ left: todayWk * 28, background: 'var(--c-danger)' }} />
-            )}
+            <div className="absolute top-0 bottom-0 w-0.5 z-10" title="сегодня"
+              style={{ left: todayX, background: 'var(--c-danger)' }} />
           </div>
 
           {[...byHyp.entries()].map(([hid, stages]) => {
@@ -218,43 +278,55 @@ function RoadmapTab({ pid, hyps }: { pid: string; hyps: Hypothesis[] }) {
                     onClick={() => setOpen(open === hid ? null : hid)}>
                     {stages[0].hypothesis_title}
                   </button>
-                  <div className="relative h-6 flex-1" style={{ minWidth: weeks * 28 }}>
-                    {todayWk >= 0 && todayWk <= weeks && (
-                      <div className="absolute top-0 bottom-0 w-0.5"
-                        style={{ left: todayWk * 28, background: 'color-mix(in srgb, var(--c-danger) 45%, transparent)' }} />
-                    )}
-                    {stages.map(it => (
-                      <div key={it.id}
-                        className="absolute h-5 rounded-md flex items-center text-[10px] px-1 overflow-hidden group"
-                        style={{
-                          left: wk(it.start) * 28,
-                          width: Math.max((wk(it.end) - wk(it.start)) * 28, 12),
-                          ...STAGE_STYLE[it.stage],
-                        }}
-                        title={`${STAGE_LABEL[it.stage]}: ${it.start} → ${it.end}` +
-                          (it.resource ? ` · ${it.resource}` : '') +
-                          (it.shifted_reason ? ` · ${it.shifted_reason}` : '') +
-                          `\nворота: ${it.gate_criterion}`}>
-                        <span className="truncate">{STAGE_LABEL[it.stage]}</span>
-                        <button
-                          className="hidden group-hover:grid place-items-center absolute right-0.5 top-0.5 w-4 h-4 rounded"
-                          style={{ background: 'var(--c-surface)', color: 'var(--c-text)' }}
-                          onClick={() => move(it, 1)} title="сдвинуть на неделю вправо">
-                          <Icon name="arrowRight" className="w-3 h-3" />
-                        </button>
-                      </div>
+                  <div className="relative h-6 flex-1" style={{ minWidth: trackW }}>
+                    {/* сетка месяцев */}
+                    {months.map((m, i) => (
+                      <div key={'m' + i} className="absolute top-0 bottom-0 w-px"
+                        style={{ left: m.x, background: 'var(--c-line)' }} />
                     ))}
+                    {/* сегодня */}
+                    <div className="absolute top-0 bottom-0 w-0.5"
+                      style={{ left: todayX, background: 'color-mix(in srgb, var(--c-danger) 45%, transparent)' }} />
+                    {/* сегменты */}
+                    {stages.map(it => {
+                      const dragging = !!drag && drag.hid === hid && parseDay(it.start) >= drag.fromStart
+                      const dx = dragging ? drag!.deltaW * PXW : 0
+                      return (
+                        <div key={it.id} onPointerDown={e => startDrag(e, it)}
+                          className="absolute h-5 rounded-md flex items-center text-[10px] px-1 group cursor-grab active:cursor-grabbing select-none"
+                          style={{
+                            left: xOf(it.start), width: Math.max(xOf(it.end) - xOf(it.start), 14), top: 2,
+                            transform: dx ? `translateX(${dx}px)` : undefined,
+                            opacity: dragging ? 0.85 : 1,
+                            zIndex: dragging ? 20 : undefined,
+                            boxShadow: it.manual_conflict ? 'inset 0 0 0 2px var(--c-danger)' : undefined,
+                            ...STAGE_STYLE[it.stage],
+                          }}
+                          title={`${STAGE_LABEL[it.stage]}: ${ruDate(it.start)} → ${ruDate(it.end)}`
+                            + (it.resource ? ` · ${it.resource}` : '')
+                            + (it.shifted_reason ? ` · ${it.shifted_reason}` : '')
+                            + (it.manual_conflict && it.conflict_with?.length ? `\n⚠ принятый конфликт: ${it.conflict_with.join(', ')}` : '')
+                            + `\nворота: ${it.gate_criterion ?? ''}`
+                            + `\nтяните или ◀ ▶ — сдвиг на неделю`}>
+                          <span className="truncate pointer-events-none flex-1">{STAGE_LABEL[it.stage]}</span>
+                          <button onPointerDown={e => e.stopPropagation()} onClick={() => nudge(it, -1)}
+                            className="hidden group-hover:grid place-items-center absolute left-0 top-0 h-5 w-4 rounded-l-md"
+                            style={{ background: 'var(--c-surface)', color: 'var(--c-text)' }} title="на неделю назад">
+                            <Icon name="arrowRight" className="w-3 h-3 rotate-180" />
+                          </button>
+                          <button onPointerDown={e => e.stopPropagation()} onClick={() => nudge(it, 1)}
+                            className="hidden group-hover:grid place-items-center absolute right-0 top-0 h-5 w-4 rounded-r-md"
+                            style={{ background: 'var(--c-surface)', color: 'var(--c-text)' }} title="на неделю вперёд">
+                            <Icon name="arrowRight" className="w-3 h-3" />
+                          </button>
+                        </div>
+                      )
+                    })}
+                    {/* ворота */}
                     {stages.map(it => (
-                      <div key={it.id + 'g'}
-                        className="absolute w-2 h-2 rotate-45 top-1.5 -ml-1"
-                        style={{ left: wk(it.end) * 28, background: 'var(--c-ink)' }}
+                      <div key={it.id + 'g'} className="absolute w-2 h-2 rotate-45 top-2 -ml-1 pointer-events-none"
+                        style={{ left: xOf(it.end), background: 'var(--c-ink)' }}
                         title={`ворота: ${it.gate_criterion ?? ''}`} />
-                    ))}
-                    {stages.filter(s => s.shifted_reason).map(it => (
-                      <div key={it.id + 's'}
-                        className="absolute h-5 border-l-2 border-dashed text-[10px] pl-1"
-                        style={{ left: wk(it.start) * 28 - 2, top: 0, borderColor: 'var(--c-warn)', color: 'var(--c-warn)' }}
-                        title={it.shifted_reason ?? ''}>⏳</div>
                     ))}
                   </div>
                 </div>
@@ -267,10 +339,13 @@ function RoadmapTab({ pid, hyps }: { pid: string; hyps: Hypothesis[] }) {
                       </div>
                     ))}
                     {stages.map(it => it.shifted_reason && (
-                      <div key={it.id} className="text-muted">
-                        ⏳ {STAGE_LABEL[it.stage]}: {it.shifted_reason}
-                      </div>
+                      <div key={it.id} className="text-muted">⏳ {STAGE_LABEL[it.stage]}: {it.shifted_reason}</div>
                     ))}
+                    {stages.map(it => (it.manual_conflict && it.conflict_with?.length ? (
+                      <div key={it.id + 'c'} style={{ color: 'var(--c-danger)' }}>
+                        ⚠ {STAGE_LABEL[it.stage]}: принятый конфликт с {it.conflict_with.join(', ')}
+                      </div>
+                    ) : null))}
                   </div>
                 )}
               </div>
@@ -278,14 +353,33 @@ function RoadmapTab({ pid, hyps }: { pid: string; hyps: Hypothesis[] }) {
           })}
 
           <SectionLabel>
-            <span className="ml-64 inline-flex flex-wrap items-center gap-x-1.5">
-              <span className="inline-block w-2 h-2 rotate-45" style={{ background: 'var(--c-ink)' }} />
-              ворота с критерием · «<Icon name="arrowRight" className="inline w-3 h-3" />» на сегменте —
-              ручной сдвиг (при конфликте вернётся 409) · линия
-              <span className="inline-block w-2.5 h-0.5 align-middle" style={{ background: 'var(--c-danger)' }} /> — сегодня
+            <span className="ml-64 inline-flex flex-wrap items-center gap-x-2 gap-y-1">
+              <span className="inline-block w-2 h-2 rotate-45" style={{ background: 'var(--c-ink)' }} /> ворота с критерием ·
+              тяните сегмент или ◀ ▶ (±неделя) ·
+              <span className="inline-block w-2.5 h-0.5 align-middle" style={{ background: 'var(--c-danger)' }} /> сегодня ·
+              <span className="inline-block w-3 h-3 rounded align-middle" style={{ boxShadow: 'inset 0 0 0 2px var(--c-danger)' }} /> принятый конфликт
             </span>
           </SectionLabel>
         </div>
+      )}
+
+      {conflict && (
+        <Modal title="Конфликт занятости ресурса" onClose={() => setConflict(null)}>
+          <div className="space-y-4 text-sm">
+            <p>Сдвиг вызывает конфликт — общий ресурс занят другой стадией этого проекта в то же время:</p>
+            <div className="card-2 p-3" style={{ color: 'var(--c-danger)' }}>{conflict.message}</div>
+            <p className="text-muted">
+              Можно <b>принять конфликт</b> и всё равно сдвинуть — пересекающиеся стадии
+              пометятся красной рамкой. Или отменить и оставить как есть.
+            </p>
+            <div className="flex gap-2 justify-end">
+              <button className="btn" onClick={() => setConflict(null)}>Отменить</button>
+              <button className="btn btn-danger" onClick={() => doMove(conflict.itemId, conflict.start, true)}>
+                Принять конфликт и сдвинуть
+              </button>
+            </div>
+          </div>
+        </Modal>
       )}
     </div>
   )

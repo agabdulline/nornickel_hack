@@ -76,21 +76,43 @@ def test_stages_and_gates(three_hypotheses):
 
 def test_move_into_conflict_rejected(three_hypotheses):
     items = build_roadmap(three_hypotheses, start=date(2026, 7, 6))
-    a_pilot = next(i for i in items if i.hypothesis_id == "hyp-a" and i.stage == "pilot")
+    b_lab = next(i for i in items if i.hypothesis_id == "hyp-b" and i.stage == "lab")
     b_pilot = next(i for i in items if i.hypothesis_id == "hyp-b" and i.stage == "pilot")
     old_b = (b_pilot.start, b_pilot.end)
 
-    ok, reason = move_item(items, b_pilot.id, date.fromisoformat(a_pilot.start))
-    assert ok is False
+    # самый ранний легальный старт b_pilot (конец его лабы) уже перекрывает мельницу A
+    ok, kind, reason = move_item(items, b_pilot.id, date.fromisoformat(b_lab.end))
+    assert ok is False and kind == "resource"
     assert "конфликт" in reason or "мельница" in reason
     assert (b_pilot.start, b_pilot.end) == old_b, "неудачный сдвиг не должен менять расписание"
+
+
+def test_move_into_conflict_accepted_with_force(three_hypotheses):
+    """force=True принимает ресурсный конфликт: сдвиг применяется, стадии помечаются;
+    последующее разведение снимает пометку."""
+    items = build_roadmap(three_hypotheses, start=date(2026, 7, 6))
+    a_pilot = next(i for i in items if i.hypothesis_id == "hyp-a" and i.stage == "pilot")
+    b_lab = next(i for i in items if i.hypothesis_id == "hyp-b" and i.stage == "lab")
+    b_pilot = next(i for i in items if i.hypothesis_id == "hyp-b" and i.stage == "pilot")
+
+    ok, kind, _ = move_item(items, b_pilot.id, date.fromisoformat(b_lab.end), force=True)
+    assert ok is True and kind == "resource"
+    assert b_pilot.start == b_lab.end
+    assert a_pilot.manual_conflict and b_pilot.manual_conflict
+    assert b_pilot.conflict_with, "должно быть указано, с чем конфликт"
+
+    # увести b далеко → конфликт разведён, пометки сняты
+    far = date.fromisoformat(b_lab.end) + timedelta(weeks=40)
+    ok2, _k, _ = move_item(items, b_pilot.id, far)
+    assert ok2 is True
+    assert not a_pilot.manual_conflict and not b_pilot.manual_conflict
 
 
 def test_move_valid_shift(three_hypotheses):
     items = build_roadmap(three_hypotheses, start=date(2026, 7, 6))
     c_pilot = next(i for i in items if i.hypothesis_id == "hyp-c" and i.stage == "pilot")
     new_start = date.fromisoformat(c_pilot.start) + timedelta(weeks=30)
-    ok, reason = move_item(items, c_pilot.id, new_start)
+    ok, _kind, reason = move_item(items, c_pilot.id, new_start)
     assert ok is True, reason
     assert c_pilot.start == new_start.isoformat()
     # rollout сдвинулся вслед

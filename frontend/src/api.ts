@@ -152,11 +152,24 @@ export const api = {
   roadmapBuild: (pid: string) =>
     j<RoadmapItem[]>(fetch(`/api/projects/${pid}/roadmap/build`, { method: 'POST' })),
   roadmap: (pid: string) => j<RoadmapItem[]>(fetch(`/api/projects/${pid}/roadmap`)),
-  roadmapMove: (itemId: string, start: string) =>
-    j<{ items: RoadmapItem[] }>(fetch(`/api/roadmap/items/${encodeURIComponent(itemId)}`, {
+  // При конфликте бросает Error с полем .kind (resource|order|past|notfound);
+  // detail-объект нельзя гнать через j(), поэтому разбираем ответ вручную.
+  roadmapMove: async (itemId: string, start: string, force = false): Promise<{ items: RoadmapItem[] }> => {
+    const resp = await fetch(`/api/roadmap/items/${encodeURIComponent(itemId)}`, {
       method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ start }),
-    })),
+      body: JSON.stringify({ start, force }),
+    })
+    if (resp.ok) return resp.json()
+    let kind = '', message = resp.statusText
+    try {
+      const d = (await resp.json()).detail
+      if (d && typeof d === 'object') { kind = d.kind ?? ''; message = d.message ?? message }
+      else if (typeof d === 'string') message = d
+    } catch { /* пусто */ }
+    const err = new Error(message) as Error & { kind: string }
+    err.kind = kind
+    throw err
+  },
 
   kbDocs: () => j<KbDoc[]>(fetch('/api/kb/documents')),
   kbUpload: (file: File) => {

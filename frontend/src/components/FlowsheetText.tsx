@@ -27,6 +27,39 @@ const regime = (n: FlowsheetNode) => {
   return bits.join(' · ')
 }
 
+/** Переиспользуемый текстовый рендер флоушита (карточка линии, модалка
+ * «как оцифрован граф» в «Схемах фабрик»). */
+export function FlowsheetTextView({ fs }: { fs: FlowsheetData }) {
+  const tails = new Set((fs.streams ?? []).filter(s => s.kind === 'tails').map(s => s.from))
+  const groups = TYPE_ORDER
+    .map(t => ({ type: t, nodes: fs.nodes.filter(n => n.type === t) }))
+    .filter(g => g.nodes.length > 0)
+  return (
+    <div className="space-y-2.5 text-sm border-l-2 border-line pl-3">
+      {groups.map(g => (
+        <div key={g.type}>
+          <SectionLabel>{TYPE_LABEL[g.type]}</SectionLabel>
+          <ul className="space-y-1">
+            {g.nodes.map(n => (
+              <li key={n.id}>
+                <span className="font-medium">{n.name}</span>
+                {regime(n) && (
+                  <span className="num text-xs ml-2" style={{ color: 'var(--c-muted)' }}>
+                    {regime(n)}
+                  </span>
+                )}
+                {tails.has(n.id) && (
+                  <span className="text-xs ml-2 text-danger">▼ хвосты</span>
+                )}
+              </li>
+            ))}
+          </ul>
+        </div>
+      ))}
+    </div>
+  )
+}
+
 /** Попап перед загрузкой схемы: что произойдёт и сколько займёт. */
 function DigitizeInfoModal({ onPick, onClose }: { onPick: () => void; onClose: () => void }) {
   return (
@@ -107,12 +140,6 @@ export default function FlowsheetText({ lineId, lineName }: { lineId: string; li
     } finally { setUploading(false) }
   }
 
-  const tails = new Set((fs?.streams ?? []).filter(s => s.kind === 'tails').map(s => s.from))
-  const groups = fs
-    ? TYPE_ORDER.map(t => ({ type: t, nodes: fs.nodes.filter(n => n.type === t) }))
-        .filter(g => g.nodes.length > 0)
-    : []
-
   return (
     <div>
       <div className="flex items-center gap-3 flex-wrap">
@@ -159,30 +186,7 @@ export default function FlowsheetText({ lineId, lineName }: { lineId: string; li
               «загрузить схему».
             </div>
           )}
-          {fs && (
-            <div className="space-y-2.5 text-sm border-l-2 border-line pl-3">
-              {groups.map(g => (
-                <div key={g.type}>
-                  <SectionLabel>{TYPE_LABEL[g.type]}</SectionLabel>
-                  <ul className="space-y-1">
-                    {g.nodes.map(n => (
-                      <li key={n.id}>
-                        <span className="font-medium">{n.name}</span>
-                        {regime(n) && (
-                          <span className="num text-xs ml-2" style={{ color: 'var(--c-muted)' }}>
-                            {regime(n)}
-                          </span>
-                        )}
-                        {tails.has(n.id) && (
-                          <span className="text-xs ml-2 text-danger">▼ хвосты</span>
-                        )}
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              ))}
-            </div>
-          )}
+          {fs && <FlowsheetTextView fs={fs} />}
         </div>
       )}
 

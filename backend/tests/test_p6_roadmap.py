@@ -125,3 +125,24 @@ def test_skip_lab_profile():
     h = _h("hyp-d", "Насадки ГЦ", "classification", score=0.5)
     items = build_roadmap([h], start=date(2026, 7, 6))
     assert [i.stage for i in items] == ["pilot", "rollout"]
+
+
+def test_lab_long_over_two_short_not_conflict():
+    """Ёмкость лабы = 2: длинная лаба, накрывающая две НЕпересекающиеся короткие,
+    не конфликт (одновременно активны ≤ 2). Три одновременных — конфликт."""
+    from backend.app.hypotheses.roadmap import find_resource_conflicts
+    from backend.app.models import RoadmapItem
+
+    def L(hid, s, e):
+        return RoadmapItem(id=f"{hid}:lab", hypothesis_id=hid, stage="lab",
+                           start=s, end=e, resource="лаборатория")
+
+    ok_case = [L("a", "2026-07-04", "2026-08-01"),   # длинная 4 нед
+               L("b", "2026-07-04", "2026-07-18"),    # короткая, 1-я половина
+               L("c", "2026-07-18", "2026-08-01")]    # короткая, 2-я половина
+    assert find_resource_conflicts(ok_case) == []
+
+    over = [L("a", "2026-07-04", "2026-07-18"),
+            L("b", "2026-07-04", "2026-07-18"),
+            L("c", "2026-07-04", "2026-07-18")]        # три одновременно > 2
+    assert len(find_resource_conflicts(over)) > 0

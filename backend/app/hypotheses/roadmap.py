@@ -109,7 +109,11 @@ def build_roadmap(hypotheses: list[Hypothesis], start: date | None = None,
 
 def find_resource_conflicts(items: list[RoadmapItem], lab_capacity: int | None = None,
                             ) -> list[tuple[RoadmapItem, RoadmapItem, str]]:
-    """Пары стадий, превышающих ёмкость общего ресурса (для форс-сдвига и подсветки)."""
+    """Пары стадий, РЕАЛЬНО превышающих ёмкость общего ресурса (для форс-сдвига и
+    подсветки). Превышение = в какой-то момент одновременно активны > cap стадий.
+    Пик занятости всегда приходится на старт какой-то стадии, поэтому проверяем
+    ровно эти моменты (иначе попарный счёт ложно ловит длинную стадию, накрывающую
+    две непересекающиеся короткие на ресурсе ёмкостью > 1)."""
     cfg = pack().get("roadmap", {})
     lab_capacity = lab_capacity or int(cfg.get("lab_capacity", 2))
     by_res: dict[str, list[RoadmapItem]] = {}
@@ -119,12 +123,18 @@ def find_resource_conflicts(items: list[RoadmapItem], lab_capacity: int | None =
     seen: set[tuple[str, str]] = set()
     for res, lst in by_res.items():
         cap = lab_capacity if res == "лаборатория" else 1
-        for a in lst:
+        over_ids: set[str] = set()
+        for x in lst:
+            xs = date.fromisoformat(x.start)
+            active = [y for y in lst
+                      if date.fromisoformat(y.start) <= xs < date.fromisoformat(y.end)]
+            if len(active) > cap:
+                over_ids.update(y.id for y in active)
+        over = [x for x in lst if x.id in over_ids]
+        for i, a in enumerate(over):
             a_s, a_e = date.fromisoformat(a.start), date.fromisoformat(a.end)
-            concurrent = [b for b in lst if b is not a and _overlaps(
-                a_s, a_e, date.fromisoformat(b.start), date.fromisoformat(b.end))]
-            if len(concurrent) + 1 > cap:
-                for b in concurrent:
+            for b in over[i + 1:]:
+                if _overlaps(a_s, a_e, date.fromisoformat(b.start), date.fromisoformat(b.end)):
                     key = tuple(sorted((a.id, b.id)))
                     if key not in seen:
                         seen.add(key)

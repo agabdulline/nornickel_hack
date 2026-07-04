@@ -20,25 +20,6 @@ function emptyConstraints(): ProjectConstraints {
   return { equipment: [], materials: [] }
 }
 
-// исследуемый материал: кейс не только про хвосты (предложный падеж — для цели)
-const MATERIALS: { value: string; goal: string }[] = [
-  { value: 'отвальные хвосты', goal: 'в отвальных хвостах' },
-  { value: 'хвосты контрольной флотации', goal: 'в хвостах контрольной флотации' },
-  { value: 'пирротиновые хвосты', goal: 'в пирротиновых хвостах' },
-  { value: 'коллективный концентрат', goal: 'в коллективном концентрате' },
-  { value: 'Ni-концентрат', goal: 'в Ni-концентрате' },
-  { value: 'Cu-концентрат', goal: 'в Cu-концентрате' },
-  { value: 'промпродукт', goal: 'в промпродукте' },
-  { value: 'питание (руда)', goal: 'в питании флотации' },
-  { value: 'пески гидроциклонов', goal: 'в песках гидроциклонов' },
-  { value: 'слив классификации', goal: 'в сливе классификации' },
-  { value: 'шламы', goal: 'в шламах' },
-]
-const goalFor = (material: string) => {
-  const m = MATERIALS.find(x => x.value === material)
-  return m ? `Снижение потерь Ni и Cu ${m.goal}` : `Снижение потерь Ni и Cu — ${material}`
-}
-
 /** Название проекта по умолчанию: "{линия} · QN YYYY". */
 function defaultProjectName(lineName: string): string {
   const d = new Date()
@@ -166,18 +147,10 @@ function Home() {
   const [lineNames, setLineNames] = useState<Map<string, string>>(new Map())
   const [name, setName] = useState('')
   const [line, setLine] = useState<Line | null>(null)
-  const [material, setMaterial] = useState(MATERIALS[0].value)
-  const [goal, setGoal] = useState(goalFor(MATERIALS[0].value))
-  const [goalDirty, setGoalDirty] = useState(false)
+  const [goal, setGoal] = useState('Снижение потерь Ni и Cu в отвальных хвостах')
   // материалы, приложенные в модалке создания: зальются после создания проекта
   const [pendingFiles, setPendingFiles] = useState<File[]>([])
   const [factory, setFactory] = useState('')   // '' = авто-определение по xlsx
-
-  const pickMaterial = (m: string) => {
-    setMaterial(m)
-    // цель следует за материалом, пока пользователь не отредактировал её сам
-    if (!goalDirty) setGoal(goalFor(m))
-  }
 
   const [constraints, setConstraints] = useState<ProjectConstraints>(emptyConstraints())
   const [err, setErr] = useState('')
@@ -217,7 +190,7 @@ function Home() {
     try {
       const finalName = name.trim() || defaultProjectName(line.name)
       const p = await api.createProject({
-        plant: line.id, name: finalName, goal, material,
+        plant: line.id, name: finalName, goal,
         project_constraints: constraints, factory: factory || undefined,
       })
       // материалы, приложенные в модалке, заливаем сразу после создания
@@ -266,19 +239,10 @@ function Home() {
               <span className="field-label">Фабрика / линия</span>
               <LineCombobox value={line} onSelect={selectLine} allowCreate={false} />
             </label>
-            <label className="block lg:w-44 shrink-0">
-              <span className="field-label">Материал</span>
-              <input className="input mt-1.5" list="material-options"
-                title="Исследуемый материал отчёта: хвосты, концентрат, промпродукт — или свой вариант"
-                value={material} onChange={e => pickMaterial(e.target.value)} />
-              <datalist id="material-options">
-                {MATERIALS.map(m => <option key={m.value} value={m.value} />)}
-              </datalist>
-            </label>
             <label className="block lg:flex-1 min-w-0">
               <span className="field-label">Цель</span>
               <input className="input mt-1.5" placeholder="снизить потери Ni на 1.5 п.п."
-                value={goal} onChange={e => { setGoal(e.target.value); setGoalDirty(true) }} />
+                value={goal} onChange={e => setGoal(e.target.value)} />
             </label>
             <div className="flex gap-2 shrink-0">
               <button className="btn" onClick={() => setSettingsOpen(true)}

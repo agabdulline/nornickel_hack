@@ -127,7 +127,11 @@ function LinesSection() {
       )}
 
       <div className="divide-y divide-line">
-        {lines.map(line => {
+        {/* лаборатории — сверху, затем производственные линии; внутри групп по имени */}
+        {[...lines].sort((a, b) =>
+          (a.kind === 'лаборатория' ? 0 : 1) - (b.kind === 'лаборатория' ? 0 : 1)
+          || a.name.localeCompare(b.name)
+        ).map(line => {
           const isEditing = editingLineId === line.id
           const isExpanded = expanded === line.id
           return (

@@ -1,0 +1,36 @@
+# «Фабрика гипотезы» — изолированный прод-стек (проект nornickel).
+# Только web-контейнер публикуется на хост (127.0.0.1:8012); системный nginx
+# проксирует туда домен nornickel.indata.group. Ничего чужого не трогает.
+name: nornickel
+
+services:
+  backend:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.backend
+    image: nornickel-backend
+    restart: unless-stopped
+    env_file: ../.env            # LLM-ключи + EMBED_MODEL из .env
+    environment:
+      HF_HOME: /app/models_cache
+    volumes:
+      - ../data:/app/data:ro     # данные кейса (read-only, для сида)
+      - nornickel_storage:/app/storage      # sqlite + индекс KB
+      - nornickel_models:/app/models_cache  # кэш эмбеддинг-модели (bge-m3)
+    expose:
+      - "8000"
+
+  web:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.frontend
+    image: nornickel-web
+    restart: unless-stopped
+    depends_on:
+      - backend
+    ports:
+      - "127.0.0.1:8012:80"      # только localhost; наружу — через системный nginx
+
+volumes:
+  nornickel_storage:
+  nornickel_models:

@@ -1,0 +1,25 @@
+# Бэкенд «Фабрика гипотез» — FastAPI + KB (sentence-transformers/chromadb).
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# системные зависимости: gcc для сборки редких колёс, git не нужен
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential curl && rm -rf /var/lib/apt/lists/*
+
+# torch — только CPU-колесо (на сервере нет GPU): меньше и без CUDA
+RUN pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu
+
+COPY requirements.txt requirements-ml.txt ./
+RUN pip install --no-cache-dir -r requirements.txt -r requirements-ml.txt
+
+# код приложения (данные кейса, storage и models_cache монтируются томами)
+COPY backend ./backend
+COPY domain_packs ./domain_packs
+COPY scripts ./scripts
+
+ENV HF_HOME=/app/models_cache \
+    PYTHONUNBUFFERED=1
+
+EXPOSE 8000
+CMD ["uvicorn", "backend.app.main:app", "--host", "0.0.0.0", "--port", "8000"]

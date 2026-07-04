@@ -1,0 +1,16 @@
+.venv
+**/node_modules
+frontend/dist
+storage
+models_cache
+chroma
+.git
+data
+eval/out
+**/__pycache__
+*.pyc
+*.log
+*.pdf
+*.dc.html
+kb_extra_sources.xlsx
+storage/app.db.bak-preseed

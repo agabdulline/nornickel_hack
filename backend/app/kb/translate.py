@@ -169,10 +169,19 @@ def _run_batches(todo: list[tuple[str, str]], llm: LLMClient) -> dict[str, str]:
                 continue
         return res
 
+    def safe_batch(batch: list[tuple[str, str]]) -> dict[str, str]:
+        # упавший батч (таймауты сети после ретраев llm.py) не роняет остальные:
+        # его фрагменты просто остаются без перевода до следующего запроса
+        try:
+            return one_batch(batch)
+        except (LLMUnavailable, ValueError) as e:
+            log.warning("Перевод: батч из %d фрагментов пропущен (%s)", len(batch), e)
+            return {}
+
     from concurrent.futures import ThreadPoolExecutor
     batches = [todo[i:i + 3] for i in range(0, len(todo), 3)]
     with ThreadPoolExecutor(max_workers=min(4, len(batches))) as pool:
-        results = list(pool.map(one_batch, batches))
+        results = list(pool.map(safe_batch, batches))
     got = {k: t for res in results for k, t in res.items()}
 
     # переводы не по-русски отбрасываем; один ретрай для отклонённых
@@ -180,7 +189,7 @@ def _run_batches(todo: list[tuple[str, str]], llm: LLMClient) -> dict[str, str]:
     if bad:
         log.warning("Перевод: %d фрагментов не на русском — ретрай", len(bad))
         text_by = dict(todo)
-        retry = one_batch([(k, text_by[k]) for k in bad])
+        retry = safe_batch([(k, text_by[k]) for k in bad])
         for k in bad:
             if k in retry and _is_ru(retry[k]):
                 got[k] = retry[k]

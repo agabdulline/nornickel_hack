@@ -21,6 +21,7 @@ export default function Hypotheses() {
     { money: 0.4, capex: 0.25, risk: 0.2, novelty: 0.15 })
   const [areaFilter, setAreaFilter] = useState<string[]>([])
   const [noCapex, setNoCapex] = useState(false)
+  const [showMissingEquipment, setShowMissingEquipment] = useState(false)
   const [exclusions, setExclusions] = useState('')
   const [chunk, setChunk] = useState<{ id: string; quote: string } | null>(null)
 
@@ -38,11 +39,17 @@ export default function Hypotheses() {
     } catch (e) { setErr(String(e)) } finally { setBusy(false) }
   }
 
-  const visible = useMemo(() => (hyps ?? []).filter(h => {
+  const missingEquipment = (h: Hypothesis) => h.equipment.some(e => !e.present_on_plant)
+
+  const passesBaseFilters = useMemo(() => (hyps ?? []).filter(h => {
     if (areaFilter.length && !areaFilter.includes(h.process_area)) return false
     if (noCapex && String(h.feasibility?.capex).toLowerCase() === 'high') return false
     return true
   }), [hyps, areaFilter, noCapex])
+  const visible = useMemo(() =>
+    passesBaseFilters.filter(h => showMissingEquipment || !missingEquipment(h)),
+    [passesBaseFilters, showMissingEquipment])
+  const hiddenForEquipment = passesBaseFilters.length - visible.length
 
   const feedback = async (h: Hypothesis, action: 'accept' | 'reject') => {
     let reason = ''
@@ -95,6 +102,13 @@ export default function Hypotheses() {
                 onChange={e => setNoCapex(e.target.checked)} />
               без капзатрат
             </label>
+            <label className="flex items-start gap-2 text-sm cursor-pointer text-text leading-snug">
+              <input type="checkbox" checked={showMissingEquipment}
+                className="mt-0.5"
+                style={{ accentColor: 'var(--c-brand)' }}
+                onChange={e => setShowMissingEquipment(e.target.checked)} />
+              показывать требующие нового оборудования
+            </label>
           </Panel>
 
           <Panel title="Исключения / ограничения" bodyClass="p-4">
@@ -120,6 +134,17 @@ export default function Hypotheses() {
                 onChunk={(id, quote) => setChunk({ id, quote })} />
             ))}
           </div>
+          {!showMissingEquipment && hiddenForEquipment > 0 && (
+            <div className="card-2 p-3 text-xs text-muted flex items-start gap-2">
+              <Icon name="alert" className="w-3.5 h-3.5 shrink-0 mt-0.5 text-warn" />
+              <span>
+                Скрыто <span className="num">{hiddenForEquipment}</span> —{' '}
+                {hiddenForEquipment === 1 ? 'гипотеза требует' : 'гипотез требуют'} оборудования,
+                которого нет на линии. Включите «показывать требующие нового оборудования»
+                в фильтрах слева.
+              </span>
+            </div>
+          )}
         </div>
       </div>
 
@@ -135,6 +160,8 @@ function HypCard({ h, rank, onFeedback, onChunk }: {
 }) {
   const [open, setOpen] = useState(rank === 1)
   const expertMatch = (h.novelty?.prior_matches?.length ?? 0) > 0
+  const missing = h.equipment.filter(e => !e.present_on_plant)
+  const present = h.equipment.filter(e => e.present_on_plant)
 
   const accent = h.status === 'accepted'
     ? { borderLeft: '4px solid var(--c-ok)' }
@@ -153,6 +180,19 @@ function HypCard({ h, rank, onFeedback, onChunk }: {
             <Badge>{h.element}</Badge>
             <CapexBadge capex={h.feasibility?.capex} />
             <Badge>риски: <span className="num">{h.risks.length}</span></Badge>
+            {missing.length > 0 && (
+              <Badge tone="warn">
+                <Icon name="alert" className="w-3 h-3 shrink-0" />требует нового оборудования (CAPEX)
+              </Badge>
+            )}
+            {missing.length === 0 && present.length > 0 && (
+              <Badge tone="ok">
+                <Icon name="check" className="w-3 h-3 shrink-0" />
+                {present.map(e => e.name).join(', ')} есть
+                {present.some(e => e.positions.length > 0) &&
+                  `, позиции ${present.flatMap(e => e.positions).join(', ')}`}
+              </Badge>
+            )}
             {h.diagnosis_rule && <Badge><span className="num">[{h.diagnosis_rule}]</span></Badge>}
             {expertMatch && (
               <Badge tone="ok"><Icon name="check" className="w-3 h-3" />Совпадает с гипотезой экспертов</Badge>

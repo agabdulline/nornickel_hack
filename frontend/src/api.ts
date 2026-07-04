@@ -1,6 +1,6 @@
 import type {
-  ChatAnswer, DiagnosticsResult, FlowsheetData, Hypothesis, KbDoc, Project, RoadmapItem,
-  TailingsReport,
+  ChatAnswer, DiagnosticsResult, Equipment, FlowsheetData, Hypothesis, KbDoc, Line,
+  LineMaterial, Material, Project, ProjectConstraints, RoadmapItem, TailingsReport,
 } from './types'
 
 async function j<T>(pending: Promise<Response>): Promise<T> {
@@ -18,7 +18,10 @@ export const api = {
 
   projects: () => j<Project[]>(fetch('/api/projects')),
   project: (id: string) => j<Project>(fetch(`/api/projects/${id}`)),
-  createProject: (body: { plant: string; goal?: string; constraints?: string; factory?: string }) =>
+  createProject: (body: {
+    plant: string; name?: string; goal?: string; constraints?: string; factory?: string
+    project_constraints?: ProjectConstraints
+  }) =>
     j<Project>(fetch('/api/projects', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
@@ -28,6 +31,64 @@ export const api = {
     j<{ factory: string | null; flowsheet: FlowsheetData | null;
         rule_node_types?: Record<string, string[]> }>(
       fetch(`/api/projects/${pid}/flowsheet`)),
+
+  // ---------- линии/лаборатории (мастер-данные) ----------
+  lines: () => j<Line[]>(fetch('/api/lines')),
+  createLine: (body: { name: string; kind?: string; ownership?: string }) =>
+    j<Line>(fetch('/api/lines', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    })),
+  updateLine: (id: string, body: { name?: string; kind?: string; ownership?: string }) =>
+    j<Line>(fetch(`/api/lines/${id}`, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    })),
+
+  // ---------- справочник материалов ----------
+  materials: () => j<Material[]>(fetch('/api/materials')),
+  createMaterial: (name: string) =>
+    j<Material>(fetch('/api/materials', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name }),
+    })),
+
+  // ---------- сырьё линии ----------
+  lineMaterials: (lineId: string) =>
+    j<LineMaterial[]>(fetch(`/api/line-materials?line_id=${encodeURIComponent(lineId)}`)),
+  addLineMaterial: (body: {
+    line_id: string; name: string; quantity: number; unit: string; material_id?: string
+  }) =>
+    j<LineMaterial>(fetch('/api/line-materials', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    })),
+  updateLineMaterial: (id: string, body: {
+    quantity?: number; unit?: string; name?: string; material_id?: string
+  }) =>
+    j<LineMaterial>(fetch(`/api/line-materials/${id}`, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    })),
+  deleteLineMaterial: (id: string) =>
+    j<{ ok: boolean }>(fetch(`/api/line-materials/${id}`, { method: 'DELETE' })),
+
+  equipmentForLine: (lineId: string) =>
+    j<Equipment[]>(fetch(`/api/equipment?line_id=${encodeURIComponent(lineId)}`)),
+  addEquipment: (body: { line_id: string; name: string; position?: string; category?: string }) =>
+    j<Equipment>(fetch('/api/equipment', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    })),
+  updateEquipment: (id: string, body: {
+    name?: string; position?: string; category?: string; status?: string
+  }) =>
+    j<Equipment>(fetch(`/api/equipment/${id}`, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    })),
+  deleteEquipment: (id: string) =>
+    j<{ ok: boolean }>(fetch(`/api/equipment/${id}`, { method: 'DELETE' })),
 
   uploadReport: (pid: string, file: File) => {
     const fd = new FormData()

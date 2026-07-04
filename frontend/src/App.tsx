@@ -3,14 +3,72 @@ import {
   HashRouter, Link, NavLink, Navigate, Route, Routes, useParams,
 } from 'react-router-dom'
 import { api } from './api'
-import type { Project } from './types'
+import type { Line, Project, ProjectConstraints } from './types'
 import ChatPanel from './components/ChatPanel'
+import { EquipmentEditor, LineCombobox, MaterialsEditor, NO_OBJECT_ID } from './components/lines'
 import Report from './screens/Report'
 import LossMap from './screens/LossMap'
 import Hypotheses from './screens/Hypotheses'
 import ExportScreen from './screens/Export'
 import KB from './screens/KB'
 import { EmptyBox, Icon, Logo, SectionLabel, Stepper, ThemeToggle } from './components/common'
+
+function emptyConstraints(): ProjectConstraints {
+  return { equipment: [], materials: [] }
+}
+
+/** Название проекта по умолчанию: "{линия} · QN YYYY". */
+function defaultProjectName(lineName: string): string {
+  const d = new Date()
+  const q = Math.floor(d.getMonth() / 3) + 1
+  return `${lineName} · Q${q} ${d.getFullYear()}`
+}
+
+/** Блок «Ограничения»: оборудование и сырьё линии (write-through), нормативка.
+ *
+ * Развилка не «линия/лаборатория» — у обеих есть своё оборудование — а
+ * «объект выбран vs без привязки к объекту»: во втором случае площадка ещё
+ * не определена и ограничения по оборудованию/сырью не применяются вовсе. */
+function ConstraintsSection({ line, value, onChange }: {
+  line: Line; value: ProjectConstraints
+  onChange: (v: ProjectConstraints) => void
+}) {
+  const noObject = line.id === NO_OBJECT_ID
+
+  useEffect(() => {
+    if (noObject) { onChange({ ...value, equipment: [], materials: [] }); return }
+    let live = true
+    Promise.all([api.equipmentForLine(line.id), api.lineMaterials(line.id)])
+      .then(([equipment, materials]) => {
+        if (!live) return
+        onChange({ ...value, equipment, materials })
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+      }).catch(() => {})
+    return () => { live = false }
+    // подтягиваем каталог только при смене линии — value намеренно не в зависимостях
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [line.id, noObject])
+
+  return (
+    <div className="space-y-3 pt-3 border-t border-line">
+      <SectionLabel>Ограничения</SectionLabel>
+
+      {noObject ? (
+        <div className="text-sm text-faint">
+          Площадка не выбрана — ограничения по оборудованию и сырью не применяются,
+          гипотезы будут теоретическими.
+        </div>
+      ) : (
+        <>
+          <EquipmentEditor lineId={line.id} value={value.equipment}
+            onChange={equipment => onChange({ ...value, equipment })} />
+          <MaterialsEditor lineId={line.id} value={value.materials}
+            onChange={materials => onChange({ ...value, materials })} />
+        </>
+      )}
+    </div>
+  )
+}
 
 const STEPS = [
   { path: 'report', label: 'Данные', num: 1 },
@@ -68,7 +126,7 @@ function ProjectLayout() {
       <TopBar>
         <Link to="/" className="shrink-0"><Logo compact /></Link>
         <span className="text-sm truncate hidden lg:block" style={{ color: 'var(--c-muted)' }}>
-          {project?.plant ?? '…'}
+          {(project?.name || project?.plant) ?? '…'}
         </span>
         <div className="mx-auto"><Stepper pid={pid} steps={STEPS} /></div>
         <div className="flex items-center gap-1.5 shrink-0">
@@ -100,9 +158,11 @@ function ProjectLayout() {
 
 function Home() {
   const [projects, setProjects] = useState<Project[]>([])
-  const [plant, setPlant] = useState('')
-  const [goal, setGoal] = useState('')
+  const [name, setName] = useState('')
+  const [line, setLine] = useState<Line | null>(null)
+  const [goal, setGoal] = useState('Снижение потерь Ni и Cu в отвальных хвостах')
   const [factory, setFactory] = useState('')   // '' = авто-определение по xlsx
+  const [constraints, setConstraints] = useState<ProjectConstraints>(emptyConstraints())
   const [err, setErr] = useState('')
 
   // список + обогащение прогрессом (has_report / hypotheses_count) для «шаг N/4»
@@ -115,10 +175,19 @@ function Home() {
   }
   useEffect(() => { load() }, [])
 
+  const selectLine = (l: Line) => {
+    setLine(l)
+    setConstraints(emptyConstraints())
+  }
+
   const create = async () => {
-    if (!plant.trim()) { setErr('Укажите фабрику / линию'); return }
+    if (!line) { setErr('Выберите фабрику/линию'); return }
     try {
-      const p = await api.createProject({ plant, goal, factory: factory || undefined })
+      const finalName = name.trim() || defaultProjectName(line.name)
+      const p = await api.createProject({
+        plant: line.id, name: finalName, goal,
+        project_constraints: constraints, factory: factory || undefined,
+      })
       location.hash = `#/p/${p.id}/report`
     } catch (e) { setErr(String(e)) }
   }
@@ -161,9 +230,14 @@ function Home() {
             </div>
             <div className="space-y-3">
               <label className="block">
+                <span className="field-label">Название проекта</span>
+                <input className="input mt-1.5"
+                  placeholder={line ? defaultProjectName(line.name) : 'напр.: НОФ · вкрапленные руды · Q3 2026'}
+                  value={name} onChange={e => setName(e.target.value)} />
+              </label>
+              <label className="block">
                 <span className="field-label">Фабрика / линия</span>
-                <input className="input mt-1.5" placeholder="напр. НОФ · линия 2 · Cu–Ni"
-                  value={plant} onChange={e => setPlant(e.target.value)} />
+                <LineCombobox value={line} onSelect={selectLine} />
               </label>
               <label className="block">
                 <span className="field-label">Цель</span>
@@ -179,6 +253,9 @@ function Home() {
                   <option value="КГМК">КГМК (Кольская)</option>
                 </select>
               </label>
+              {line && (
+                <ConstraintsSection line={line} value={constraints} onChange={setConstraints} />
+              )}
             </div>
             <button className="btn btn-primary btn-lg w-full mt-4" onClick={create}>
               Создать проект <Icon name="arrowRight" className="w-4 h-4" />
@@ -199,7 +276,7 @@ function Home() {
                       <Link key={p.id} to={`/p/${p.id}/${STEP_PATH[step - 1]}`}
                         className="card hover-lift px-5 py-4 flex items-center gap-4">
                         <div className="min-w-0 flex-1">
-                          <div className="font-bold truncate">{p.plant}</div>
+                          <div className="font-bold truncate">{p.name || p.plant}</div>
                           <div className="text-sm truncate mt-0.5" style={{ color: 'var(--c-muted)' }}>
                             {p.goal ? `Цель: ${p.goal}` : '—'}
                           </div>

@@ -115,6 +115,56 @@ class EquipmentRef(BaseModel):
     present_on_plant: bool = True
 
 
+class Equipment(BaseModel):
+    """Единица оборудования, привязанная к конкретной линии (онтология раздела «Ограничения»)."""
+    id: str
+    line_id: str
+    name: str
+    position: str = ""
+    category: str = ""
+    status: Literal["в эксплуатации", "резерв", "выведено"] = "в эксплуатации"
+
+
+class Line(BaseModel):
+    """Фабрика/линия или лаборатория — мастер-данные, независимые от жизненного цикла проекта.
+
+    kind — только для отображения/фильтра (у обеих категорий есть своё
+    оборудование: промышленное или лабораторное). Показывать ли блок
+    «Оборудование» решает НЕ kind, а то, привязан ли проект к конкретному
+    объекту вообще (см. сентинел "без привязки к объекту" на фронте).
+    """
+    id: str
+    name: str
+    kind: Literal["производственная линия", "лаборатория"] = "производственная линия"
+    ownership: Literal["в штате компании", "внешний подрядчик/партнёр"] = "в штате компании"
+
+
+class Material(BaseModel):
+    """Общий справочник материалов/сырья.
+
+    Пока отдельный от графа знаний модуля генерации гипотез (там сущностей
+    «материал» ещё нет) — в будущем стоит объединить с сущностями графа,
+    чтобы «вкрапленная руда» была одной записью, а не двумя независимыми.
+    """
+    id: str
+    name: str
+
+
+class LineMaterial(BaseModel):
+    """Остаток сырья на линии (см. пункт 3 ТЗ по мастер-данным).
+
+    unit — свободная строка, не Literal: стандартный список предлагается на
+    фронте (т/кг/г/мг/м³/л/мл/%/ppm/моль/ммоль/г/т), но «своя единица…»
+    позволяет ввести произвольную.
+    """
+    id: str
+    line_id: str
+    material_id: str
+    name: str
+    quantity: float = 0.0
+    unit: str = "т"
+
+
 class Effect(BaseModel):
     tonnes_max: float = 0.0
     tonnes_expected: float = 0.0
@@ -175,12 +225,29 @@ class ChatAnswer(BaseModel):
     references: list[ChatReference] = Field(default_factory=list)
 
 
+class ProjectConstraints(BaseModel):
+    """Раздел «Ограничения» формы создания проекта (аддитивно к строке constraints).
+
+    equipment/materials — НЕ снимок: это всегда live-данные линии (см.
+    Store.constraints_for_project), правки в них пишутся напрямую в мастер-данные
+    линии (write-through), отдельного слепка на момент создания проекта нет.
+
+    Нормативные требования (регуляторная чувствительность) сюда сознательно не
+    включены — отложенная фича, к ней вернутся отдельно; недоделанный UI хуже,
+    чем его отсутствие.
+    """
+    equipment: list[Equipment] = Field(default_factory=list)
+    materials: list[LineMaterial] = Field(default_factory=list)
+
+
 class Project(BaseModel):
     id: str
-    plant: str
+    name: str = ""       # «Название проекта»; если пусто — фронт подставляет "{линия} · QN YYYY"
+    plant: str            # ссылка на Line.id (историческое имя поля — раньше было свободным текстом)
     goal: str = ""
     constraints: str = ""
     created_at: str = ""
     weights: dict = Field(default_factory=lambda: {"money": 0.4, "capex": 0.25, "risk": 0.2, "novelty": 0.15})
     stoplist: list[str] = Field(default_factory=list)
     factory: str | None = None   # НОФ|ТОФ|КГМК: оверрайд селектором или авто по xlsx
+    project_constraints: ProjectConstraints = Field(default_factory=ProjectConstraints)

@@ -11,7 +11,10 @@ import LossMap from './screens/LossMap'
 import Hypotheses from './screens/Hypotheses'
 import ExportScreen from './screens/Export'
 import KB from './screens/KB'
-import { EmptyBox, Icon, Logo, SectionLabel, Stepper, ThemeToggle } from './components/common'
+import Projects from './screens/Projects'
+import { EmptyBox, Icon, Logo, Modal, SectionLabel, Stepper, ThemeToggle } from './components/common'
+import { SiteHeader } from './components/SiteHeader'
+import { ProjectCard } from './components/ProjectCard'
 
 function emptyConstraints(): ProjectConstraints {
   return { equipment: [], materials: [] }
@@ -76,31 +79,6 @@ const STEPS = [
   { path: 'hypotheses', label: 'Гипотезы', num: 3 },
   { path: 'export', label: 'Отчёт', num: 4 },
 ]
-const STEP_PATH = ['report', 'map', 'hypotheses', 'export']
-
-/** Текущий шаг проекта (1..4) по наличию отчёта/гипотез. */
-function projectStep(p: Project): number {
-  return 1 + (p.has_report ? 1 : 0) + ((p.hypotheses_count ?? 0) > 0 ? 1 : 0)
-}
-
-function fmtDate(iso?: string): string {
-  if (!iso) return '—'
-  const d = new Date(iso)
-  return isNaN(+d) ? iso.slice(0, 10) : d.toLocaleDateString('ru-RU')
-}
-
-/** Точки прогресса «шаг N/4». */
-function StepDots({ current, total = 4 }: { current: number; total?: number }) {
-  return (
-    <div className="hidden sm:flex items-center gap-1 shrink-0">
-      {Array.from({ length: total }, (_, i) => (
-        <span key={i} className="w-2 h-2 rounded-full transition-colors"
-          style={{ background: i < current ? 'var(--c-brand)' : 'var(--c-line-strong)' }} />
-      ))}
-    </div>
-  )
-}
-
 /* Общая шапка приложения */
 function TopBar({ children }: { children?: ReactNode }) {
   return (
@@ -124,10 +102,14 @@ function ProjectLayout() {
   return (
     <div className="min-h-screen flex flex-col">
       <TopBar>
-        <Link to="/" className="shrink-0"><Logo compact /></Link>
-        <span className="text-sm truncate hidden lg:block" style={{ color: 'var(--c-muted)' }}>
-          {(project?.name || project?.plant) ?? '…'}
-        </span>
+        <Link to="/" className="shrink-0 flex items-center"><Logo /></Link>
+        {(project?.name || project?.plant) && (
+          <span className="text-sm hidden lg:flex items-center gap-2 min-w-0"
+            style={{ color: 'var(--c-muted)' }}>
+            <span style={{ color: 'var(--c-line-strong)' }}>·</span>
+            <span className="truncate">{project?.name || project?.plant}</span>
+          </span>
+        )}
         <div className="mx-auto"><Stepper pid={pid} steps={STEPS} /></div>
         <div className="flex items-center gap-1.5 shrink-0">
           <NavLink to="/kb" className="btn btn-ghost btn-sm">
@@ -164,6 +146,8 @@ function Home() {
   const [factory, setFactory] = useState('')   // '' = авто-определение по xlsx
   const [constraints, setConstraints] = useState<ProjectConstraints>(emptyConstraints())
   const [err, setErr] = useState('')
+  const [chatOpen, setChatOpen] = useState(false)
+  const [settingsOpen, setSettingsOpen] = useState(false)
 
   // список + обогащение прогрессом (has_report / hypotheses_count) для «шаг N/4»
   const load = async () => {
@@ -194,111 +178,122 @@ function Home() {
 
   return (
     <div className="min-h-screen flex flex-col">
-      <TopBar>
-        <Link to="/"><Logo /></Link>
-        <div className="ml-auto flex items-center gap-1.5">
-          <NavLink to="/kb" className="btn btn-ghost btn-sm">
-            <Icon name="book" className="w-4 h-4" />
-            <span className="hidden sm:inline">База знаний</span>
-          </NavLink>
-          <ThemeToggle />
-        </div>
-      </TopBar>
+      <SiteHeader actions={
+        <button className="btn btn-primary btn-sm" onClick={() => setChatOpen(v => !v)}
+          title="Ассистент — вопросы к базе знаний">
+          <Icon name="chat" className="w-4 h-4" />
+          <span className="hidden sm:inline">Ассистент</span>
+        </button>
+      } />
 
-      <main className="max-w-7xl mx-auto w-full px-4 md:px-6 py-8 animate-fade">
-        {/* заголовок */}
-        <div className="flex items-start justify-between gap-4 flex-wrap mb-7">
-          <div>
-            <div className="text-[11px] font-bold uppercase tracking-[0.16em] mb-1.5"
-              style={{ color: 'var(--c-brand)' }}>
-              Обогащение · снижение потерь металлов
-            </div>
-            <h1 className="text-3xl md:text-4xl font-extrabold tracking-tight">Проекты</h1>
+      <main className="flex-1 max-w-5xl mx-auto w-full px-4 py-10 md:py-14 animate-fade">
+        {/* герой */}
+        <div className="text-center mb-8">
+          <div className="text-[11px] font-bold uppercase tracking-[0.16em] mb-2"
+            style={{ color: 'var(--c-brand)' }}>
+            Обогащение · снижение потерь металлов
           </div>
-          <div className="badge badge-outline num mt-1.5">технолог НОФ · научн. сотрудник НИИ</div>
+          <h1 className="text-3xl md:text-5xl font-extrabold tracking-tight">Фабрика гипотез</h1>
+          <p className="mt-2.5 text-[15px] max-w-2xl mx-auto" style={{ color: 'var(--c-muted)' }}>
+            От отчёта института по хвостам — к ранжированным проверяемым гипотезам
+            снижения потерь Ni и&nbsp;Cu.
+          </p>
         </div>
 
-        <div className="grid lg:grid-cols-3 gap-5 items-start">
-          {/* новый проект */}
-          <div className="card p-5 lg:sticky lg:top-20">
-            <div className="flex items-center gap-2.5 mb-4">
-              <span className="grid place-items-center w-9 h-9 rounded-xl shrink-0 text-white"
-                style={{ background: 'var(--c-brand)' }}>
-                <Icon name="plus" className="w-4 h-4" strokeWidth={2.6} />
-              </span>
-              <h2 className="font-bold text-lg">Новый проект</h2>
+        {/* горизонтальная карточка быстрого создания */}
+        <div className="card p-4 md:p-5" style={{ boxShadow: 'var(--shadow-card)' }}>
+          <div className="flex flex-col lg:flex-row gap-3 lg:items-end">
+            <label className="block lg:flex-1 min-w-0">
+              <span className="field-label">Название проекта</span>
+              <input className="input mt-1.5"
+                placeholder={line ? defaultProjectName(line.name) : 'напр.: НОФ · вкрапленные руды'}
+                value={name} onChange={e => setName(e.target.value)} />
+            </label>
+            <label className="block lg:flex-1 min-w-0">
+              <span className="field-label">Фабрика / линия</span>
+              <LineCombobox value={line} onSelect={selectLine} />
+            </label>
+            <label className="block lg:flex-1 min-w-0">
+              <span className="field-label">Цель</span>
+              <input className="input mt-1.5" placeholder="снизить потери Ni на 1.5 п.п."
+                value={goal} onChange={e => setGoal(e.target.value)} />
+            </label>
+            <div className="flex gap-2 shrink-0">
+              <button className="btn" onClick={() => setSettingsOpen(true)}
+                title="Схема фабрики и ограничения по оборудованию/сырью">
+                Все настройки
+              </button>
+              <button className="btn btn-primary" onClick={create}>
+                Создать <Icon name="arrowRight" className="w-4 h-4" />
+              </button>
             </div>
-            <div className="space-y-3">
-              <label className="block">
-                <span className="field-label">Название проекта</span>
-                <input className="input mt-1.5"
-                  placeholder={line ? defaultProjectName(line.name) : 'напр.: НОФ · вкрапленные руды · Q3 2026'}
-                  value={name} onChange={e => setName(e.target.value)} />
-              </label>
-              <label className="block">
-                <span className="field-label">Фабрика / линия</span>
-                <LineCombobox value={line} onSelect={selectLine} />
-              </label>
-              <label className="block">
-                <span className="field-label">Цель</span>
-                <input className="input mt-1.5" placeholder="напр. снизить потери Ni на 1.5 п.п."
-                  value={goal} onChange={e => setGoal(e.target.value)} />
-              </label>
-              <label className="block">
-                <span className="field-label">Схема фабрики (регламент)</span>
-                <select className="select mt-1.5" value={factory} onChange={e => setFactory(e.target.value)}>
-                  <option value="">Авто — по загруженному отчёту</option>
-                  <option value="НОФ">НОФ (Норильская)</option>
-                  <option value="ТОФ">ТОФ (Талнахская)</option>
-                  <option value="КГМК">КГМК (Кольская)</option>
-                </select>
-              </label>
-              {line && (
-                <ConstraintsSection line={line} value={constraints} onChange={setConstraints} />
-              )}
-            </div>
-            <button className="btn btn-primary btn-lg w-full mt-4" onClick={create}>
-              Создать проект <Icon name="arrowRight" className="w-4 h-4" />
-            </button>
-            {err && <div className="text-sm mt-2" style={{ color: 'var(--c-danger)' }}>{err}</div>}
           </div>
+          {line && (
+            <div className="text-xs mt-2.5 flex items-center gap-1.5" style={{ color: 'var(--c-faint)' }}>
+              <Icon name="lock" className="w-3.5 h-3.5 shrink-0" />
+              Ограничения по оборудованию и сырью линии — в «Все настройки»
+            </div>
+          )}
+          {err && <div className="text-sm mt-2" style={{ color: 'var(--c-danger)' }}>{err}</div>}
+        </div>
 
-          {/* существующие проекты */}
-          <div className="lg:col-span-2">
-            <SectionLabel>Существующие проекты</SectionLabel>
-            {projects.length === 0
-              ? <EmptyBox text="Пока нет проектов" hint="Создайте первый проект слева" icon="doc" />
-              : (
-                <div className="space-y-3 stagger">
-                  {projects.map(p => {
-                    const step = projectStep(p)
-                    return (
-                      <Link key={p.id} to={`/p/${p.id}/${STEP_PATH[step - 1]}`}
-                        className="card hover-lift px-5 py-4 flex items-center gap-4">
-                        <div className="min-w-0 flex-1">
-                          <div className="font-bold truncate">{p.name || p.plant}</div>
-                          <div className="text-sm truncate mt-0.5" style={{ color: 'var(--c-muted)' }}>
-                            {p.goal ? `Цель: ${p.goal}` : '—'}
-                          </div>
-                        </div>
-                        <StepDots current={step} />
-                        <div className="text-right shrink-0">
-                          <div className="num text-xs" style={{ color: 'var(--c-faint)' }}>
-                            {fmtDate(p.created_at)}
-                          </div>
-                          <div className="text-xs font-bold mt-1 flex items-center gap-1 justify-end"
-                            style={{ color: 'var(--c-brand)' }}>
-                            шаг {step}/4 <Icon name="arrowRight" className="w-3.5 h-3.5" />
-                          </div>
-                        </div>
-                      </Link>
-                    )
-                  })}
-                </div>
-              )}
+        {/* последние проекты */}
+        <div className="mt-9">
+          <div className="flex items-center gap-3 mb-3">
+            <SectionLabel>Последние проекты</SectionLabel>
+            <Link to="/projects" className="btn btn-ghost btn-sm ml-auto">
+              Просмотреть все <Icon name="arrowRight" className="w-3.5 h-3.5" />
+            </Link>
           </div>
+          {projects.length === 0
+            ? <EmptyBox text="Пока нет проектов" hint="Создайте первый проект выше" icon="doc" />
+            : (
+              <div className="grid sm:grid-cols-2 gap-3 stagger">
+                {projects.slice(0, 4).map(p => <ProjectCard key={p.id} p={p} />)}
+              </div>
+            )}
         </div>
       </main>
+
+      {settingsOpen && (
+        <Modal title="Новый проект — все настройки" onClose={() => setSettingsOpen(false)}>
+          <div className="space-y-3">
+            <label className="block">
+              <span className="field-label">Название проекта</span>
+              <input className="input mt-1.5"
+                placeholder={line ? defaultProjectName(line.name) : 'напр.: НОФ · вкрапленные руды · Q3 2026'}
+                value={name} onChange={e => setName(e.target.value)} />
+            </label>
+            <label className="block">
+              <span className="field-label">Фабрика / линия</span>
+              <LineCombobox value={line} onSelect={selectLine} />
+            </label>
+            <label className="block">
+              <span className="field-label">Цель</span>
+              <input className="input mt-1.5" placeholder="напр. снизить потери Ni на 1.5 п.п."
+                value={goal} onChange={e => setGoal(e.target.value)} />
+            </label>
+            <label className="block">
+              <span className="field-label">Схема фабрики (регламент)</span>
+              <select className="select mt-1.5" value={factory} onChange={e => setFactory(e.target.value)}>
+                <option value="">Авто — по загруженному отчёту</option>
+                <option value="НОФ">НОФ (Норильская)</option>
+                <option value="ТОФ">ТОФ (Талнахская)</option>
+                <option value="КГМК">КГМК (Кольская)</option>
+              </select>
+            </label>
+            {line && <ConstraintsSection line={line} value={constraints} onChange={setConstraints} />}
+          </div>
+          <div className="flex items-center gap-3 mt-4 pt-3 border-t" style={{ borderColor: 'var(--c-line)' }}>
+            <button className="btn btn-primary" onClick={create}>
+              Создать проект <Icon name="arrowRight" className="w-4 h-4" />
+            </button>
+            <button className="btn btn-ghost" onClick={() => setSettingsOpen(false)}>Отмена</button>
+            {err && <span className="text-sm ml-auto" style={{ color: 'var(--c-danger)' }}>{err}</span>}
+          </div>
+        </Modal>
+      )}
+      {chatOpen && <ChatPanel onClose={() => setChatOpen(false)} />}
     </div>
   )
 }
@@ -308,6 +303,7 @@ export default function App() {
     <HashRouter>
       <Routes>
         <Route path="/" element={<Home />} />
+        <Route path="/projects" element={<Projects />} />
         <Route path="/kb" element={<KBWrap />} />
         <Route path="/p/:pid/*" element={<ProjectLayout />} />
       </Routes>
@@ -318,11 +314,7 @@ export default function App() {
 function KBWrap() {
   return (
     <div className="min-h-screen flex flex-col">
-      <TopBar>
-        <Link to="/"><Logo /></Link>
-        <span className="text-sm" style={{ color: 'var(--c-muted)' }}>База знаний</span>
-        <div className="ml-auto"><ThemeToggle /></div>
-      </TopBar>
+      <SiteHeader />
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 py-5 animate-fade">
         <KB />
       </main>

@@ -325,6 +325,18 @@ def test_translate_texts_and_quote_ru(tmp_path, monkeypatch):
     assert h.rationale[0].quote_ru
 
 
+def test_project_material_roundtrip(tmp_path):
+    """Исследуемый материал проекта: не только хвосты — хранится и читается,
+    у старых проектов дефолт «отвальные хвосты»."""
+    from backend.app.store import Store
+
+    store = Store(tmp_path / "m.db")
+    p = store.create_project("НОФ", material="концентрат")
+    assert store.get_project(p.id).material == "концентрат"
+    p2 = store.create_project("НОФ")  # без указания — дефолт
+    assert store.get_project(p2.id).material == "отвальные хвосты"
+
+
 def test_doc_lang_tie_deterministic():
     from backend.app.kb.index import doc_lang
     assert doc_lang([RU, EN]) == "ru", "при ничьей приоритет ru"

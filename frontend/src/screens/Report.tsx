@@ -15,9 +15,14 @@ export default function Report() {
   const nav = useNavigate()
   const [reports, setReports] = useState<TailingsReport[] | null>(null)
   const [tailType, setTailType] = useState('')
+  const [material, setMaterial] = useState('отвальные хвосты')
   const [err, setErr] = useState('')
   const [uploading, setUploading] = useState(false)
   const fileRef = useRef<HTMLInputElement>(null)
+
+  useEffect(() => {
+    api.project(pid).then(p => p.material && setMaterial(p.material)).catch(() => {})
+  }, [pid])
 
   const load = () => api.report(pid)
     .then(r => { setReports(r.reports); setTailType(t => t || r.reports[0]?.tail_type || '') })
@@ -81,7 +86,7 @@ export default function Report() {
             <Icon name="doc" className="w-7 h-7" />
           </div>
           <div className="font-bold text-base mb-1">
-            Загрузите отчёт института по хвостам (.xlsx)
+            Загрузите отчёт института (.xlsx) — {material}
           </div>
           <div className="text-sm text-muted mb-5">
             Битые значения (<span className="num">#REF!</span>) система подсветит —
@@ -123,7 +128,8 @@ export default function Report() {
 
       {/* сводка KPI */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 stagger">
-        <StatCard label="Отвальные хвосты, СМТ" value={fmt.t(report.tails_tonnes, 0)} icon="factory" />
+        <StatCard label={`${material.charAt(0).toUpperCase() + material.slice(1)}, СМТ`}
+          value={fmt.t(report.tails_tonnes, 0)} icon="factory" />
         <StatCard label="Потери Ni" tone="loss" icon="chart"
           value={`${fmt.t(report.losses_tonnes.Ni)} т`} sub={fmt.pct(report.grade.Ni, 4)} />
         <StatCard label="Потери Cu" tone="loss" icon="chart"

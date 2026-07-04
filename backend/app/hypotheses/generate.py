@@ -57,11 +57,12 @@ def _line_equipment_ontology(project_equipment: list[dict]) -> list[dict]:
     return list(by_name.values())
 
 
-def report_summary(report: TailingsReport) -> dict:
+def report_summary(report: TailingsReport, material: str = "отвальные хвосты") -> dict:
     return {
         "фабрика": report.plant,
+        "исследуемый_материал": material,
         "тип_хвостов": report.tail_type,
-        "хвосты_СМТ": report.tails_tonnes,
+        "материал_СМТ": report.tails_tonnes,
         "содержание_%": report.grade,
         "потери_т": report.losses_tonnes,
         "извлекаемо_т": report.recoverable_total,
@@ -83,6 +84,7 @@ def generate_hypotheses(report: TailingsReport, diag: DiagnosticsResult, *,
                         project_equipment: list[dict] | None = None,
                         flowsheet_summary: dict | None = None,
                         reagent_hints: list[dict] | None = None,
+                        material: str = "отвальные хвосты",
                         n_samples: int = 1) -> list[Hypothesis]:
     """n_samples > 1 — best-of-N: параллельные независимые генерации, объединение
     и смысловой дедуп (LLM недобирает направления в одиночном сэмпле)."""
@@ -113,7 +115,7 @@ def generate_hypotheses(report: TailingsReport, diag: DiagnosticsResult, *,
         few_shot = [] if os.environ.get("GEN_NO_FEWSHOT") == "1" \
             else cross_plant_examples(report.plant)
         eq_for_prompt = _line_equipment_ontology(project_equipment) if project_equipment else equipment_list()
-        prompt = build_user_prompt(report_summary(report), diagnoses_payload, chunks,
+        prompt = build_user_prompt(report_summary(report, material), diagnoses_payload, chunks,
                                    eq_for_prompt, constraints, stoplist,
                                    history_titles, excluded_areas,
                                    intervention_menu=pack().get("intervention_menu"),

@@ -43,6 +43,7 @@ class ProjectIn(BaseModel):
     constraints: str = ""
     weights: dict | None = None
     factory: str | None = None   # оверрайд селектором; иначе авто по xlsx
+    material: str = "отвальные хвосты"  # исследуемый материал (кейс не только про хвосты)
     project_constraints: ProjectConstraints | None = None
 
 
@@ -51,7 +52,7 @@ def create_project(body: ProjectIn, store: Store = Depends(get_store)) -> Projec
     return store.create_project(body.plant, body.goal, body.constraints, body.weights,
                                 factory=body.factory,
                                 project_constraints=body.project_constraints,
-                                name=body.name)
+                                name=body.name, material=body.material)
 
 
 # ---------- линии/лаборатории (мастер-данные, раздел «База знаний») ----------
@@ -430,6 +431,7 @@ def generate(pid: str, body: GenerateIn, store: Store = Depends(get_store),
         flowsheet_summary=summarize_for_prompt(factory),
         reagent_hints=zero_reagent_hints(factory, kb_index=kb),
         project_equipment=[e.model_dump() for e in project_equipment],
+        material=project.material,
         n_samples=2)  # best-of-2: параллельные сэмплы + смысловой дедуп
     verify_citations(hyps, kb)
     prior = expert_titles_for_plant(report.plant) + \

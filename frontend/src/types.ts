@@ -37,6 +37,7 @@ export interface StopEntry {
 
 export interface Project {
   id: string; name: string; plant: string; goal: string; constraints: string;
+  material?: string;  // исследуемый материал (по умолчанию «отвальные хвосты»)
   created_at: string; weights: Record<string, number>; stoplist: string[];
   project_constraints?: ProjectConstraints;
   has_report?: boolean; hypotheses_count?: number;

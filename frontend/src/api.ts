@@ -29,6 +29,7 @@ export const api = {
   project: (id: string) => j<Project>(fetch(`/api/projects/${id}`)),
   createProject: (body: {
     plant: string; name?: string; goal?: string; constraints?: string; factory?: string
+    material?: string
     project_constraints?: ProjectConstraints
   }) =>
     j<Project>(fetch('/api/projects', {

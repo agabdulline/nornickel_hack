@@ -140,13 +140,33 @@ function ProjectLayout() {
   )
 }
 
+// исследуемый материал: кейс не только про хвосты (предложный падеж — для цели)
+const MATERIALS: { value: string; goal: string }[] = [
+  { value: 'отвальные хвосты', goal: 'в отвальных хвостах' },
+  { value: 'концентрат', goal: 'в концентрате' },
+  { value: 'промпродукт', goal: 'в промпродукте' },
+  { value: 'питание (руда)', goal: 'в питании флотации' },
+]
+const goalFor = (material: string) => {
+  const m = MATERIALS.find(x => x.value === material)
+  return m ? `Снижение потерь Ni и Cu ${m.goal}` : `Снижение потерь Ni и Cu — ${material}`
+}
+
 function Home() {
   const [projects, setProjects] = useState<Project[]>([])
   const [loadingProjects, setLoadingProjects] = useState(true)
   const [name, setName] = useState('')
   const [line, setLine] = useState<Line | null>(null)
-  const [goal, setGoal] = useState('Снижение потерь Ni и Cu в отвальных хвостах')
+  const [material, setMaterial] = useState(MATERIALS[0].value)
+  const [goal, setGoal] = useState(goalFor(MATERIALS[0].value))
+  const [goalDirty, setGoalDirty] = useState(false)
   const [factory, setFactory] = useState('')   // '' = авто-определение по xlsx
+
+  const pickMaterial = (m: string) => {
+    setMaterial(m)
+    // цель следует за материалом, пока пользователь не отредактировал её сам
+    if (!goalDirty) setGoal(goalFor(m))
+  }
   const [constraints, setConstraints] = useState<ProjectConstraints>(emptyConstraints())
   const [err, setErr] = useState('')
   const [chatOpen, setChatOpen] = useState(false)
@@ -182,7 +202,7 @@ function Home() {
     try {
       const finalName = name.trim() || defaultProjectName(line.name)
       const p = await api.createProject({
-        plant: line.id, name: finalName, goal,
+        plant: line.id, name: finalName, goal, material,
         project_constraints: constraints, factory: factory || undefined,
       })
       location.hash = `#/p/${p.id}/report`
@@ -208,8 +228,8 @@ function Home() {
           </div>
           <h1 className="text-3xl md:text-5xl font-extrabold tracking-tight">Фабрика гипотез</h1>
           <p className="mt-2.5 text-[15px] max-w-2xl mx-auto" style={{ color: 'var(--c-muted)' }}>
-            От отчёта института по хвостам — к ранжированным проверяемым гипотезам
-            снижения потерь Ni и&nbsp;Cu.
+            От отчёта института — к ранжированным проверяемым гипотезам
+            снижения потерь Ni и&nbsp;Cu в хвостах, концентратах и промпродуктах.
           </p>
         </div>
 
@@ -226,10 +246,19 @@ function Home() {
               <span className="field-label">Фабрика / линия</span>
               <LineCombobox value={line} onSelect={selectLine} />
             </label>
+            <label className="block lg:w-44 shrink-0">
+              <span className="field-label">Материал</span>
+              <input className="input mt-1.5" list="material-options"
+                title="Исследуемый материал отчёта: хвосты, концентрат, промпродукт — или свой вариант"
+                value={material} onChange={e => pickMaterial(e.target.value)} />
+              <datalist id="material-options">
+                {MATERIALS.map(m => <option key={m.value} value={m.value} />)}
+              </datalist>
+            </label>
             <label className="block lg:flex-1 min-w-0">
               <span className="field-label">Цель</span>
               <input className="input mt-1.5" placeholder="снизить потери Ni на 1.5 п.п."
-                value={goal} onChange={e => setGoal(e.target.value)} />
+                value={goal} onChange={e => { setGoal(e.target.value); setGoalDirty(true) }} />
             </label>
             <div className="flex gap-2 shrink-0">
               <button className="btn" onClick={() => setSettingsOpen(true)}

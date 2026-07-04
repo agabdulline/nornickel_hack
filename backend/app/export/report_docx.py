@@ -56,7 +56,8 @@ def build_report_docx(project: Project, report: TailingsReport, diag: Diagnostic
     title.alignment = WD_ALIGN_PARAGRAPH.CENTER
     p = d.add_paragraph(f"Проект: {project.name or project.plant}")
     p.add_run(f"\nЦель: {project.goal or '—'}")
-    p.add_run(f"\nТип хвостов: {report.tail_type}")
+    p.add_run(f"\nИсследуемый материал: {getattr(project, 'material', '') or 'отвальные хвосты'}"
+              f" ({report.tail_type})")
     p.add_run(f"\nДата: {date.today().isoformat()}")
 
     # сводка
@@ -65,7 +66,8 @@ def build_report_docx(project: Project, report: TailingsReport, diag: Diagnostic
     cu_t = report.losses_tonnes.get("Cu")
     rec_ni = report.recoverable_total.get("Ni")
     d.add_paragraph(
-        f"Отвальные хвосты: {report.tails_tonnes:,.0f} СМТ. "
+        f"{(getattr(project, 'material', '') or 'отвальные хвосты').capitalize()}: "
+        f"{report.tails_tonnes:,.0f} СМТ. "
         f"Потери: Ni {ni_t:,.1f} т ({report.grade.get('Ni', 0):.4f}%), "
         f"Cu {cu_t:,.1f} т ({report.grade.get('Cu', 0):.4f}%). "
         f"Извлекаемый потенциал: Ni {rec_ni:,.1f} т "

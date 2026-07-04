@@ -152,6 +152,8 @@ def build_context(question: str, report: TailingsReport, diag: DiagnosticsResult
                                                     "экран не определён"),
         "проект": {"название": project.name or None, "объект": project.plant,
                    "фабрика": project.factory, "цель": project.goal or None,
+                   "исследуемый_материал": getattr(project, "material", None)
+                   or "отвальные хвосты",
                    "ограничения": project.constraints or None},
         "отчёт": report_ctx,
         "диагнозы": diag_ctx,

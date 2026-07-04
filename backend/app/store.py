@@ -134,6 +134,10 @@ class Store:
             self._conn.execute("ALTER TABLE projects ADD COLUMN factory TEXT")
         except sqlite3.OperationalError:
             pass
+        try:  # миграция: исследуемый материал (не только отвальные хвосты)
+            self._conn.execute("ALTER TABLE projects ADD COLUMN material TEXT")
+        except sqlite3.OperationalError:
+            pass
         self._migrate_project_constraints()
         self._migrate_project_name()
         self._migrate_lines_kind_ownership()
@@ -235,9 +239,10 @@ class Store:
     def create_project(self, plant: str, goal: str = "", constraints: str = "",
                        weights: dict | None = None, factory: str | None = None,
                        project_constraints: ProjectConstraints | None = None,
-                       name: str = "") -> Project:
+                       name: str = "", material: str = "отвальные хвосты") -> Project:
         p = Project(id=uuid.uuid4().hex[:10], plant=plant, goal=goal, name=name,
-                    constraints=constraints, created_at=_now(), factory=factory)
+                    constraints=constraints, created_at=_now(), factory=factory,
+                    material=material or "отвальные хвосты")
         if weights:
             p.weights = weights
         if project_constraints:
@@ -245,11 +250,11 @@ class Store:
         with self._lock:
             self._conn.execute(
                 "INSERT INTO projects (id, plant, goal, constraints, created_at, "
-                "weights_json, stoplist_json, project_constraints_json, name, factory) "
-                "VALUES (?,?,?,?,?,?,?,?,?,?)",
+                "weights_json, stoplist_json, project_constraints_json, name, factory, "
+                "material) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
                 (p.id, p.plant, p.goal, p.constraints, p.created_at,
                  json.dumps(p.weights), json.dumps(p.stoplist, ensure_ascii=False),
-                 p.project_constraints.model_dump_json(), p.name, p.factory))
+                 p.project_constraints.model_dump_json(), p.name, p.factory, p.material))
             self._conn.commit()
         return self.get_project(p.id)
 
@@ -266,6 +271,8 @@ class Store:
                        weights=json.loads(row["weights_json"] or "{}"),
                        stoplist=json.loads(row["stoplist_json"] or "[]"),
                        factory=row["factory"] if "factory" in row.keys() else None,
+                       material=(row["material"] if "material" in row.keys() else None)
+                       or "отвальные хвосты",
                        project_constraints=pc)
         return self.constraints_for_project(p)
 

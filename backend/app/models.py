@@ -294,6 +294,7 @@ class Project(BaseModel):
     id: str
     name: str = ""       # «Название проекта»; если пусто — фронт подставляет "{линия} · QN YYYY"
     plant: str            # ссылка на Line.id (историческое имя поля — раньше было свободным текстом)
+    material: str = "отвальные хвосты"  # исследуемый материал: хвосты/концентрат/промпродукт/…
     goal: str = ""
     constraints: str = ""
     created_at: str = ""

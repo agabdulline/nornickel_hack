@@ -159,6 +159,15 @@ function Home() {
   }
   useEffect(() => { load() }, [])
 
+  const removeProject = async (p: Project) => {
+    if (!window.confirm(
+      `Удалить проект «${p.name || p.plant}»?\nОтчёт, гипотезы и дорожная карта будут удалены безвозвратно.`)) return
+    try {
+      await api.deleteProject(p.id)
+      setProjects(prev => prev.filter(x => x.id !== p.id))
+    } catch (e) { setErr(String(e)) }
+  }
+
   const selectLine = (l: Line) => {
     setLine(l)
     setConstraints(emptyConstraints())
@@ -249,7 +258,7 @@ function Home() {
             ? <EmptyBox text="Пока нет проектов" hint="Создайте первый проект выше" icon="doc" />
             : (
               <div className="grid sm:grid-cols-2 gap-3 stagger">
-                {projects.slice(0, 4).map(p => <ProjectCard key={p.id} p={p} />)}
+                {projects.slice(0, 4).map(p => <ProjectCard key={p.id} p={p} onDelete={removeProject} />)}
               </div>
             )}
         </div>

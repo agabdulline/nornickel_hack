@@ -27,8 +27,9 @@ export function StepDots({ current, total = 4 }: { current: number; total?: numb
   )
 }
 
-/** Карточка проекта в списке (главная + страница «Проекты»). */
-export function ProjectCard({ p }: { p: Project }) {
+/** Карточка проекта в списке (главная + страница «Проекты»).
+ * `onDelete` включает кнопку удаления; клик по ней не открывает проект. */
+export function ProjectCard({ p, onDelete }: { p: Project; onDelete?: (p: Project) => void }) {
   const step = projectStep(p)
   return (
     <Link to={`/p/${p.id}/${STEP_PATH[step - 1]}`}
@@ -47,6 +48,14 @@ export function ProjectCard({ p }: { p: Project }) {
           шаг {step}/4 <Icon name="arrowRight" className="w-3.5 h-3.5" />
         </div>
       </div>
+      {onDelete && (
+        <button type="button" title="Удалить проект" aria-label="Удалить проект"
+          className="shrink-0 grid place-items-center w-8 h-8 rounded-lg text-faint
+            hover:text-danger hover:bg-danger-tint transition-colors"
+          onClick={e => { e.preventDefault(); e.stopPropagation(); onDelete(p) }}>
+          <Icon name="trash" className="w-4 h-4" />
+        </button>
+      )}
     </Link>
   )
 }

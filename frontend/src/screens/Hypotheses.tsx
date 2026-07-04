@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { useParams } from 'react-router-dom'
+import { useNavigate, useParams } from 'react-router-dom'
 import { api, fmt } from '../api'
 import type { Hypothesis } from '../types'
 import {
@@ -14,6 +14,7 @@ const W_LABELS: Record<string, string> = {
 
 export default function Hypotheses() {
   const { pid = '' } = useParams()
+  const nav = useNavigate()
   const [hyps, setHyps] = useState<Hypothesis[] | null>(null)
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
@@ -66,11 +67,16 @@ export default function Hypotheses() {
 
   return (
     <div className="flex flex-col animate-in" style={{ height: 'calc(100vh - 85px)' }}>
-      <PageHeader title="Гипотезы" subtitle="Ранжирование по вашим весам" />
+      <PageHeader title="Гипотезы" subtitle="Ранжирование по вашим весам"
+        actions={
+          <button className="btn btn-primary" onClick={() => nav(`/p/${pid}/export`)}>
+            К отчёту <Icon name="arrowRight" />
+          </button>
+        } />
 
       <div className="flex gap-4 flex-1 min-h-0 mt-4">
         {/* левая панель — статична, скроллится только при нехватке высоты */}
-        <aside className="w-64 shrink-0 space-y-4 overflow-y-auto h-full pr-1 pb-2">
+        <aside className="w-64 shrink-0 space-y-4 overflow-y-auto scroll-fade h-full pr-1 pt-1 pb-2">
           <Panel title="Веса ранжирования" bodyClass="p-4 space-y-3.5">
             {Object.entries(weights).map(([k, v]) => (
               <label key={k} className="block">
@@ -120,7 +126,7 @@ export default function Hypotheses() {
         </aside>
 
         {/* карточки — прокручиваются внутри своей области */}
-        <div className="flex-1 min-w-0 space-y-3 overflow-y-auto h-full pr-1 pb-2">
+        <div className="flex-1 min-w-0 space-y-3 overflow-y-auto scroll-fade h-full pr-1 pt-1 pb-2">
           {err && <ErrorBox error={err} />}
           {hyps === null && !err && <Spinner />}
           {hyps !== null && visible.length === 0 &&

@@ -269,6 +269,17 @@ class Store:
                  p.name, p.factory, p.id))
             self._conn.commit()
 
+    def delete_project(self, pid: str) -> bool:
+        """Удаляет проект и все его данные (отчёт, гипотезы, фидбэк, дорожную
+        карту). Мастер-данные линии (оборудование/сырьё) — общие, их НЕ трогаем.
+        Возвращает False, если проекта не было."""
+        with self._lock:
+            cur = self._conn.execute("DELETE FROM projects WHERE id=?", (pid,))
+            for table in ("reports", "hypotheses", "feedback", "roadmaps"):
+                self._conn.execute(f"DELETE FROM {table} WHERE project_id=?", (pid,))
+            self._conn.commit()
+            return cur.rowcount > 0
+
     # ---------- линии/лаборатории (мастер-данные) ----------
     def list_lines(self) -> list[Line]:
         with self._lock:

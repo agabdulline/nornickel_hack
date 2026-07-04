@@ -17,6 +17,15 @@ export default function Projects() {
       .catch(() => setProjects([]))
   }, [])
 
+  const removeProject = async (p: Project) => {
+    if (!window.confirm(
+      `Удалить проект «${p.name || p.plant}»?\nОтчёт, гипотезы и дорожная карта будут удалены безвозвратно.`)) return
+    try {
+      await api.deleteProject(p.id)
+      setProjects(prev => (prev ?? []).filter(x => x.id !== p.id))
+    } catch { /* проект уже удалён/недоступен — список перечитается при заходе */ }
+  }
+
   const list = projects ?? []
   const stats = {
     total: list.length,
@@ -57,7 +66,7 @@ export default function Projects() {
               ? <EmptyBox text="Проектов нет" hint="Создайте проект на главной" icon="doc" />
               : (
                 <div className="space-y-3 stagger">
-                  {filtered.map(p => <ProjectCard key={p.id} p={p} />)}
+                  {filtered.map(p => <ProjectCard key={p.id} p={p} onDelete={removeProject} />)}
                 </div>
               )}
         </div>

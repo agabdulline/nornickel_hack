@@ -201,6 +201,13 @@ def get_project(pid: str, store: Store = Depends(get_store)) -> dict:
     return {**p.model_dump(), "has_report": has_report, "hypotheses_count": n_hyps}
 
 
+@router.delete("/projects/{pid}")
+def delete_project(pid: str, store: Store = Depends(get_store)) -> dict:
+    if not store.delete_project(pid):
+        raise HTTPException(404, "проект не найден")
+    return {"ok": True}
+
+
 def _project_or_404(pid: str, store: Store) -> Project:
     p = store.get_project(pid)
     if not p:
@@ -311,10 +318,10 @@ def get_diagnostics(pid: str, tail_type: str | None = None,
     got = store.get_reports(pid)
     if not got:
         raise HTTPException(404, "отчёт ещё не загружен")
-    reports, _meta = got
+    reports, meta = got
     report = _pick_report(reports, tail_type)
     factory, flowsheet = _project_flowsheet(pid, store)
-    diag = run_diagnostics(report, flowsheet=flowsheet)
+    diag = run_diagnostics(report, flowsheet=flowsheet, meta=meta.get("parse_meta"))
     return {"tail_type": report.tail_type, "factory": factory, **diag.model_dump(),
             "report_issues": [i.model_dump() for i in report.issues]}
 

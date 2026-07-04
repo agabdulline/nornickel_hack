@@ -82,3 +82,35 @@ def test_store_roundtrip(tmp_path):
     s.save_hypotheses(p.id, [_h("h3", 100)], replace=True)
     left = {h.id for h in s.get_hypotheses(p.id)}
     assert left == {"h1", "h3"}  # h2 (proposed) заменена, h1 (accepted) жива
+
+
+def test_delete_project_cascades_but_keeps_master_data(tmp_path):
+    from backend.app.models import TailingsReport
+    s = Store(tmp_path / "t.db")
+
+    # мастер-данные линии (общие, не проект-скоуп) — должны пережить удаление
+    line = s.create_line("НОФ · вкрапленные руды")
+    s.add_equipment(line.id, "Гидроциклон ГЦ-660", position="5-3")
+
+    p = s.create_project(line.id, goal="снизить потери")
+    s.save_reports(p.id, "х.xlsx", [TailingsReport(plant="НОФ")], {"parse_meta": {}})
+    hyps = [_h("h1", 500)]
+    rank_hypotheses(hyps, use_embeddings=False)
+    s.save_hypotheses(p.id, hyps)
+    s.add_feedback("h1", p.id, "accept", "")
+    s.save_roadmap(p.id, [{"id": "it1", "hypothesis_id": "h1", "stage": "lab"}])
+
+    assert s.delete_project(p.id) is True
+    # всё проект-скоуп вычищено
+    assert s.get_project(p.id) is None
+    assert s.get_reports(p.id) is None
+    assert s.get_hypotheses(p.id) == []
+    assert s.get_feedback(p.id) == []
+    assert s.get_roadmap(p.id) == []
+    assert s.get_hypothesis("h1") is None
+    # мастер-данные линии не тронуты
+    assert s.get_line(line.id) is not None
+    assert len(s.list_equipment(line.id)) == 1
+    # повторное удаление / несуществующий id -> False
+    assert s.delete_project(p.id) is False
+    assert s.delete_project("нет-такого") is False

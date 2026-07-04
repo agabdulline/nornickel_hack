@@ -32,6 +32,7 @@ const ICONS: Record<string, ReactNode> = {
   factory: <><path d="M3 21h18M4 21V10l6 4V10l6 4V6l4 2v13" /><path d="M8 21v-4M13 21v-4" /></>,
   chart: <path d="M4 20V10M10 20V4M16 20v-7M22 20H2" />,
   target: <><circle cx="12" cy="12" r="8" /><circle cx="12" cy="12" r="3.5" /></>,
+  trash: <><path d="M3 6h18M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" /><path d="M10 11v6M14 11v6" /></>,
 }
 
 export function Icon({ name, className = 'w-4 h-4', strokeWidth = 2 }:

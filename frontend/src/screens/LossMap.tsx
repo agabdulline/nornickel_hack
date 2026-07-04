@@ -155,18 +155,34 @@ export default function LossMap() {
   const [fsInfo, setFsInfo] = useState<{ factory: string | null; flowsheet: FlowsheetData | null } | null>(null)
 
   useEffect(() => {
-    api.flowsheet(pid).then(setFsInfo).catch(() => setFsInfo(null))
+    let live = true
+    api.flowsheet(pid)
+      .then(v => { if (live) setFsInfo(v) })
+      .catch(() => { if (live) setFsInfo(null) })
+    return () => { live = false }
   }, [pid])
 
+  // Смена проекта переиспользует этот же компонент (роут /p/:pid/map не меняется),
+  // поэтому вручную сбрасываем ошибку и данные прошлого проекта — иначе «залипают»
+  // (напр. ошибка «отчёт не загружен» остаётся, хотя новый проект загрузился).
+  // live-флаг отбрасывает ответы устаревшего запроса при быстром переключении.
   useEffect(() => {
+    let live = true
+    setErr(''); setReports(null); setDiag(null); setTailType('')
     api.report(pid)
-      .then(r => { setReports(r.reports); setTailType(r.reports[0]?.tail_type ?? '') })
-      .catch(e => setErr(String(e)))
+      .then(r => { if (!live) return; setReports(r.reports); setTailType(r.reports[0]?.tail_type ?? '') })
+      .catch(e => { if (live) setErr(String(e)) })
+    return () => { live = false }
   }, [pid])
 
   useEffect(() => {
     if (!tailType) return
-    api.diagnostics(pid, tailType).then(setDiag).catch(e => setErr(String(e)))
+    let live = true
+    setErr('')
+    api.diagnostics(pid, tailType)
+      .then(d => { if (live) setDiag(d) })
+      .catch(e => { if (live) setErr(String(e)) })
+    return () => { live = false }
   }, [pid, tailType])
 
   const report = useMemo(() =>
@@ -179,6 +195,7 @@ export default function LossMap() {
   const diagnoses = diag.diagnoses.filter(d => d.element === el)
   const notProposed = diag.not_proposed.filter(x => x.element === el)
   const r5 = diag.issues.filter(i => i.rule?.startsWith('R5') && i.severity !== 'info')
+  const hasAside = r5.length > 0 || notProposed.length > 0
 
   return (
     <div className="space-y-4 animate-in">
@@ -216,77 +233,83 @@ export default function LossMap() {
         <HeatTable el={el} diag={diag} />
       </Panel>
 
-      {/* диагнозы — в строку */}
-      <div>
-        <SectionLabel>Диагнозы {el} · {diagnoses.length}</SectionLabel>
-        {diagnoses.length === 0
-          ? <EmptyBox text={`Для ${el} правила диагностики не сработали`} icon="target" />
-          : (
-            <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3 items-start">
-              {diagnoses.map(d => {
-                const key = d.rule_id + d.element
-                return (
-                  <div key={key} className="card p-3 space-y-2 animate-in flex flex-col">
-                    <div className="flex items-center gap-2">
-                      <button type="button" title="показать правило" className="shrink-0"
-                        onClick={() => setOpenRule(openRule === key ? null : key)}>
-                        <Badge tone="solid" className="num cursor-pointer">{d.rule_id}</Badge>
+      {/* диагнозы и «почему не предложено» — в одной строке, верхи выровнены */}
+      <div className={hasAside ? 'grid gap-4 lg:grid-cols-2 items-start' : ''}>
+        {/* диагнозы */}
+        <section className="flex flex-col gap-2 min-w-0">
+          <SectionLabel>Диагнозы {el} · {diagnoses.length}</SectionLabel>
+          {diagnoses.length === 0
+            ? <EmptyBox text={`Для ${el} правила диагностики не сработали`} icon="target" />
+            : (
+              <div className={'grid gap-3 auto-rows-fr ' +
+                (hasAside ? 'lg:grid-cols-1' : 'md:grid-cols-2 xl:grid-cols-3')}>
+                {diagnoses.map(d => {
+                  const key = d.rule_id + d.element
+                  return (
+                    <div key={key} className="card p-3 space-y-2 animate-in flex flex-col h-full">
+                      <div className="flex items-center gap-2">
+                        <button type="button" title="показать правило" className="shrink-0"
+                          onClick={() => setOpenRule(openRule === key ? null : key)}>
+                          <Badge tone="solid" className="num cursor-pointer">{d.rule_id}</Badge>
+                        </button>
+                        <span className="font-semibold text-sm leading-tight">{d.title}</span>
+                        {d.uncertain && <Badge tone="warn">неуверенно</Badge>}
+                      </div>
+                      <p className="text-sm leading-relaxed flex-1">{d.text}</p>
+                      {openRule === key && (
+                        <pre className="text-xs num bg-surface-2 border border-line rounded-md p-2 overflow-x-auto"
+                          style={{ color: 'var(--c-muted)' }}>
+                          {JSON.stringify(d.inputs, null, 1)}
+                        </pre>
+                      )}
+                      <button className="btn btn-primary w-full justify-center mt-auto"
+                        onClick={() => nav(`/p/${pid}/hypotheses`)}>
+                        <Icon name="spark" />
+                        Сгенерировать гипотезы (извлекаемо <span className="num">{fmt.t(d.tonnes_recoverable, 0)}</span> т)
                       </button>
-                      <span className="font-semibold text-sm leading-tight">{d.title}</span>
-                      {d.uncertain && <Badge tone="warn">неуверенно</Badge>}
                     </div>
-                    <p className="text-sm leading-relaxed flex-1">{d.text}</p>
-                    {openRule === key && (
-                      <pre className="text-xs num bg-surface-2 border border-line rounded-md p-2 overflow-x-auto"
-                        style={{ color: 'var(--c-muted)' }}>
-                        {JSON.stringify(d.inputs, null, 1)}
-                      </pre>
-                    )}
-                    <button className="btn btn-primary w-full justify-center mt-auto"
-                      onClick={() => nav(`/p/${pid}/hypotheses`)}>
-                      <Icon name="spark" />
-                      Сгенерировать гипотезы (извлекаемо <span className="num">{fmt.t(d.tonnes_recoverable, 0)}</span> т)
-                    </button>
-                  </div>
-                )
-              })}
-            </div>
-          )}
-      </div>
-
-      {/* аномалии данных и «почему не предложено» — в строку */}
-      {(r5.length > 0 || notProposed.length > 0) && (
-        <div className="grid gap-3 md:grid-cols-2 items-start">
-          {r5.length > 0 && (
-            <div className="card p-3">
-              <div className="flex items-center gap-1.5 font-semibold text-sm text-warn mb-2">
-                <Icon name="alert" className="w-4 h-4" />
-                Аномалии данных (R5)
+                  )
+                })}
               </div>
-              <ul className="space-y-1.5">
-                {r5.slice(0, 8).map((i, n) => (
-                  <li key={n} className="text-xs bg-warn-tint text-warn rounded-md p-2">
-                    {i.message}
-                  </li>
-                ))}
-              </ul>
+            )}
+        </section>
+
+        {/* аномалии данных + «почему не предложено» */}
+        {hasAside && (
+          <section className="flex flex-col gap-2 min-w-0">
+            <SectionLabel>Почему не предложено {el}</SectionLabel>
+            <div className="flex flex-col gap-3">
+              {notProposed.length > 0 && (
+                <div className="card p-3">
+                  <ul className="space-y-1.5">
+                    {notProposed.map((x, n) => (
+                      <li key={n} className="text-xs" style={{ color: 'var(--c-muted)' }}>
+                        <span className="font-medium text-faint">🔒 {x.form}</span>
+                        <span className="num"> · {fmt.t(x.tonnes, 0)} т</span> — {x.reason}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              {r5.length > 0 && (
+                <div className="card p-3">
+                  <div className="flex items-center gap-1.5 font-semibold text-sm text-warn mb-2">
+                    <Icon name="alert" className="w-4 h-4" />
+                    Аномалии данных (R5)
+                  </div>
+                  <ul className="space-y-1.5">
+                    {r5.slice(0, 8).map((i, n) => (
+                      <li key={n} className="text-xs bg-warn-tint text-warn rounded-md p-2">
+                        {i.message}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
             </div>
-          )}
-          {notProposed.length > 0 && (
-            <div className="card p-3">
-              <div className="font-semibold text-sm mb-2">Почему не предложено ({el})</div>
-              <ul className="space-y-1.5">
-                {notProposed.map((x, n) => (
-                  <li key={n} className="text-xs" style={{ color: 'var(--c-muted)' }}>
-                    <span className="font-medium text-faint">🔒 {x.form}</span>
-                    <span className="num"> · {fmt.t(x.tonnes, 0)} т</span> — {x.reason}
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
-        </div>
-      )}
+          </section>
+        )}
+      </div>
     </div>
   )
 }

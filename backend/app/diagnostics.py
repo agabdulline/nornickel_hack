@@ -24,6 +24,7 @@ R3_MID_OPEN_PCT = 15.0         # раскрытый в средних класс
 R5_SHARE_TOL = 0.5             # допуск сумм долей, п.п.
 R5_TONNES_TOL = 0.01           # допуск сумм тонн, доля (1%)
 R5_UNEXPECTED_SHARE = 50.0     # неожиданная форма забирает > 50% потерь класса
+R5_FACT_CALC_TOL = 3.0         # расхождение итогов Факт/Расчёт, % (выше — data-quality warning; только ТОФ)
 
 COARSE = ["+125", "-125+71"]
 MIDDLE = ["-71+45", "-45+20", "-20+10"]
@@ -78,7 +79,8 @@ def _has_recovered(cells: list[LossCell]) -> bool:
     return any(c.provenance != "measured" for c in cells)
 
 
-def run_diagnostics(report: TailingsReport, flowsheet: dict | None = None) -> DiagnosticsResult:
+def run_diagnostics(report: TailingsReport, flowsheet: dict | None = None,
+                    meta: dict | None = None) -> DiagnosticsResult:
     res = DiagnosticsResult()
     for el in ("Ni", "Cu"):
         total = report.losses_tonnes.get(el) or sum(_t(c) for c in _cells(report, el))
@@ -89,10 +91,41 @@ def run_diagnostics(report: TailingsReport, flowsheet: dict | None = None) -> Di
         _r3(report, el, total, res)
         _r4(report, el, res)
     _r5(report, res)
+    res.issues.extend(_r5_fact_calc(meta))   # R5г: сверка итогов Факт/Расчёт (файл-уровень, ТОФ)
     res.loss_map = _loss_map(report)
     if flowsheet:
         _attach_flowsheet(res, flowsheet)
     return res
+
+
+def _r5_fact_calc(meta: dict | None) -> list[DataIssue]:
+    """R5г: сверка измеренного (Факт) и расчётного (Расчёт) итогов хвостов.
+
+    Блок «Расчёт» есть только в ТОФ — в остальных файлах проверка молчит.
+    Итог «Факт» — прямой замер металла в хвостах; «Расчёт» — сумма по формам
+    минералогии. Их расхождение это не ошибка парсинга, а свойство источника
+    (несходимость пробы/баланса) — но именно его жюри просит выносить явным
+    флагом качества, поэтому поднимаем warning в семействе R5."""
+    parse_meta = meta or {}
+    fact = parse_meta.get("отвальные_Факт") or {}
+    calc = parse_meta.get("отвальные_Расчёт") or {}
+    if not fact or not calc:
+        return []
+    out: list[DataIssue] = []
+    for el in ("Ni", "Cu"):
+        f, c = fact.get(f"{el}_t"), calc.get(f"{el}_t")
+        if not f or not c or f <= 0:
+            continue
+        diff = abs(f - c) / f * 100.0
+        if diff > R5_FACT_CALC_TOL:
+            f_s = f"{f:,.0f}".replace(",", " ")
+            c_s = f"{c:,.0f}".replace(",", " ")
+            out.append(DataIssue(
+                severity="warning", rule="R5g", cell=f"итог/{el}",
+                message=(f"Факт и Расчёт по {el} расходятся на {diff:.1f}% "
+                         f"(замер {f_s} т vs расчёт {c_s} т) — свойство источника, "
+                         f"проверьте пробу/баланс")))
+    return out
 
 
 def _attach_flowsheet(res: DiagnosticsResult, flowsheet: dict):

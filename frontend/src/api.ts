@@ -26,6 +26,8 @@ export const api = {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
     })),
+  deleteProject: (id: string) =>
+    j<{ ok: boolean }>(fetch(`/api/projects/${id}`, { method: 'DELETE' })),
 
   flowsheet: (pid: string) =>
     j<{ factory: string | null; flowsheet: FlowsheetData | null;

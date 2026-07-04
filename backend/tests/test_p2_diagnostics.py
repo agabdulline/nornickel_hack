@@ -93,6 +93,30 @@ def test_example1_diagnostics_no_nan():
 
 
 @requires_data
+def test_r5_fact_calc_divergence_tof():
+    """ТОФ: итоги Факт (замер) и Расчёт (по минералогии) расходятся — R5г
+    выносит это явным флагом качества «проверьте пробу/баланс»."""
+    res = parse_workbook(find_case_file(r"Пример 4/Хвосты.*\.xlsx$"))
+    diag = run_diagnostics(res.reports[0], meta=res.meta)
+    r5g = [i for i in diag.issues if i.rule == "R5g"]
+    assert r5g, "ТОФ: расхождение итогов Факт/Расчёт должно ловиться R5г"
+    ni = [i for i in r5g if "Ni" in (i.cell or "")]
+    assert ni, "должен быть флаг по Ni"
+    assert "проверьте пробу/баланс" in ni[0].message
+    assert "на 5.6%" in ni[0].message   # Факт 23756.4 vs Расчёт 22414.7
+    assert ni[0].severity == "warning"
+
+
+@requires_data
+def test_r5_fact_calc_silent_on_nof():
+    """Пример 2 (НОФ) — блока «Расчёт» нет: R5г молчит даже с переданным meta
+    (нет ложных срабатываний вне ТОФ)."""
+    res = parse_workbook(find_case_file(r"Пример 2/Хвосты.*Вкр\.xlsx$"))
+    diag = run_diagnostics(res.reports[0], meta=res.meta)
+    assert not [i for i in diag.issues if i.rule == "R5g"]
+
+
+@requires_data
 def test_loss_map_structure(example2):
     diag, _ = example2
     assert "+125" in diag.loss_map["Ni"]

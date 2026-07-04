@@ -12,8 +12,18 @@ const SUGGESTIONS = [
   'Что неизвлекаемо и почему?',
 ]
 
-export default function ChatPanel({ pid, onClose }: { pid: string; onClose: () => void }) {
+// Подсказки для режима «без проекта» — общий вопрос к базе знаний.
+const KB_SUGGESTIONS = [
+  'Как извлекают золото из упорных руд?',
+  'Что влияет на флотацию тонких шламов?',
+  'Зачем доизмельчать сростки пентландита?',
+]
+
+/** Чат-ассистент. С `pid` — интерпретатор проекта (отчёт/диагнозы/гипотезы);
+ *  без `pid` (напр. на главной) — общий вопрос к базе знаний с цитатами. */
+export default function ChatPanel({ pid, onClose }: { pid?: string; onClose: () => void }) {
   const nav = useNavigate()
+  const kbMode = !pid
   const [msgs, setMsgs] = useState<Msg[]>([])
   const [input, setInput] = useState('')
   const [busy, setBusy] = useState(false)
@@ -29,8 +39,14 @@ export default function ChatPanel({ pid, onClose }: { pid: string; onClose: () =
     setInput('')
     setBusy(true)
     try {
-      const ans = await api.chat(pid, text, history)
-      setMsgs(m => [...m, { role: 'assistant', content: ans.text, refs: ans.references }])
+      if (pid) {
+        const ans = await api.chat(pid, text, history)
+        setMsgs(m => [...m, { role: 'assistant', content: ans.text, refs: ans.references }])
+      } else {
+        const ans = await api.kbAsk(text)
+        const refs: ChatReference[] = ans.citations.map(c => ({ type: 'chunk', id: c.chunk_id }))
+        setMsgs(m => [...m, { role: 'assistant', content: ans.answer, refs }])
+      }
     } catch (e) {
       setMsgs(m => [...m, { role: 'assistant', content: `Ошибка: ${e}` }])
     } finally { setBusy(false) }
@@ -38,6 +54,7 @@ export default function ChatPanel({ pid, onClose }: { pid: string; onClose: () =
 
   const openRef = (r: ChatReference) => {
     if (r.type === 'chunk') setChunk(r.id)
+    else if (!pid) return
     else if (r.type === 'hypothesis') nav(`/p/${pid}/hypotheses`)
     else nav(`/p/${pid}/map`)
   }
@@ -48,7 +65,7 @@ export default function ChatPanel({ pid, onClose }: { pid: string; onClose: () =
     r.type === 'hypothesis' ? `гипотеза ${r.id.slice(0, 9)}` : `источник ${r.id.slice(0, 14)}…`
 
   return (
-    <aside className="fixed right-0 top-12 bottom-0 w-[26rem] max-w-full bg-surface border-l border-line
+    <aside className="fixed right-0 top-14 bottom-0 w-[26rem] max-w-full bg-surface border-l border-line
         z-40 flex flex-col animate-in" style={{ boxShadow: 'var(--shadow-pop)' }}>
 
       {/* Шапка */}
@@ -58,9 +75,11 @@ export default function ChatPanel({ pid, onClose }: { pid: string; onClose: () =
           <Icon name="chat" className="w-[18px] h-[18px]" />
         </span>
         <div className="min-w-0">
-          <div className="font-bold text-sm leading-tight truncate">Ассистент проекта</div>
+          <div className="font-bold text-sm leading-tight truncate">
+            {kbMode ? 'Ассистент · база знаний' : 'Ассистент проекта'}
+          </div>
           <div className="text-[11px] leading-tight" style={{ color: 'var(--c-faint)' }}>
-            Отвечает со ссылками на источники
+            {kbMode ? 'Отвечает по литературе с цитатами' : 'Отвечает со ссылками на источники'}
           </div>
         </div>
         <button className="btn btn-ghost !px-2 ml-auto shrink-0" onClick={onClose} aria-label="Закрыть">
@@ -73,13 +92,14 @@ export default function ChatPanel({ pid, onClose }: { pid: string; onClose: () =
         {msgs.length === 0 && (
           <div className="animate-fade">
             <div className="text-sm leading-relaxed" style={{ color: 'var(--c-muted)' }}>
-              Отвечаю на вопросы про этот отчёт, диагнозы и гипотезы — со ссылками на
-              правила, ячейки и литературу.
+              {kbMode
+                ? 'Отвечаю на вопросы по базе знаний — с цитатами из литературы и номерами страниц.'
+                : 'Отвечаю на вопросы про этот отчёт, диагнозы и гипотезы — со ссылками на правила, ячейки и литературу.'}
             </div>
             <div className="mt-5">
               <SectionLabel>С чего начать</SectionLabel>
               <div className="flex flex-col items-start gap-2 stagger">
-                {SUGGESTIONS.map(s => (
+                {(kbMode ? KB_SUGGESTIONS : SUGGESTIONS).map(s => (
                   <Chip key={s} onClick={() => send(s)}>{s}</Chip>
                 ))}
               </div>
@@ -128,7 +148,7 @@ export default function ChatPanel({ pid, onClose }: { pid: string; onClose: () =
       <form className="flex items-center gap-2 px-4 py-3 border-t border-line shrink-0"
         onSubmit={e => { e.preventDefault(); send(input) }}>
         <input className="input flex-1"
-          placeholder="Вопрос про отчёт, диагнозы, гипотезы…"
+          placeholder={kbMode ? 'Вопрос к базе знаний…' : 'Вопрос про отчёт, диагнозы, гипотезы…'}
           value={input} onChange={e => setInput(e.target.value)} disabled={busy} />
         <button className="btn btn-primary !px-3 shrink-0" disabled={busy || !input.trim()}
           aria-label="Отправить">

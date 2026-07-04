@@ -102,7 +102,7 @@ function LinesSection() {
       }
     >
       {creating && (
-        <div className="flex flex-wrap gap-1.5 items-center bg-surface-2 border border-line rounded-md p-2">
+        <div className="flex flex-wrap gap-1.5 items-center bg-surface-2 border border-line rounded-md p-2 animate-in">
           <input className="input flex-1 min-w-40"
             placeholder="напр.: НОФ · медистые руды"
             value={newName} onChange={e => setNewName(e.target.value)}
@@ -137,9 +137,12 @@ function LinesSection() {
                     </select>
                   </div>
                 ) : (
-                  <button type="button" className="flex items-center gap-2 text-left flex-1"
+                  <button type="button" aria-expanded={isExpanded}
+                    className="group flex items-center gap-2 text-left flex-1 min-w-0 -ml-1.5 px-1.5 py-1 rounded-md hover:bg-surface-2 transition-colors"
                     onClick={() => toggleExpand(line)}>
-                    <span className="font-medium text-base">{line.name}</span>
+                    <Icon name="arrowRight" strokeWidth={2.5}
+                      className={`w-4 h-4 shrink-0 text-faint transition-transform duration-200 ${isExpanded ? 'rotate-90' : ''}`} />
+                    <span className="font-medium text-base truncate">{line.name}</span>
                     {line.ownership === 'внешний подрядчик/партнёр' && (
                       <Badge tone="brand">внешний партнёр</Badge>
                     )}
@@ -154,18 +157,14 @@ function LinesSection() {
                       <button type="button" className="btn btn-sm" disabled={saving} onClick={cancelEdit}>Отмена</button>
                     </>
                   ) : (
-                    <>
-                      <button type="button" className="text-xs text-brand hover:underline"
-                        onClick={() => startEdit(line)}>Изменить</button>
-                      <button type="button" className="text-faint text-sm w-5"
-                        onClick={() => toggleExpand(line)}>{isExpanded ? '▲' : '▼'}</button>
-                    </>
+                    <button type="button" className="btn btn-ghost btn-sm text-brand"
+                      onClick={() => startEdit(line)}>Изменить</button>
                   )}
                 </div>
               </div>
 
               {isExpanded && (
-                <div className="mt-2 pl-2 border-l-2 border-line space-y-3">
+                <div className="mt-2 ml-6 pl-3 border-l-2 border-line space-y-3 animate-in">
                   {isEditing ? (
                     <>
                       <EquipmentRows rows={draftEquipment} onChange={setDraftEquipment} />

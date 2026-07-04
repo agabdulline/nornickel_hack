@@ -219,17 +219,23 @@ const LANG_LABEL: Record<string, string> = { ru: 'Русский', en: 'English'
 // неизвестный код языка не должен прятать документ — считаем русским
 const langOf = (d: KbDoc) => (LANGS as readonly string[]).includes(d.lang ?? '') ? d.lang! : 'ru'
 
-/** Модалка-читалка источника: чанки постранично, «Показать ещё». */
+/** Модалка-читалка источника: вкладки «Текст» (чанки постранично) и
+ * «Исходник» (оригинальный PDF/TXT во встроенном просмотрщике). */
 function DocPreviewModal({ doc, onClose }: { doc: KbDoc; onClose: () => void }) {
   const [chunks, setChunks] = useState<{ chunk_id: string; page_start: number; page_end: number; text: string }[]>([])
   const [total, setTotal] = useState<number | null>(null)
+  const [hasFile, setHasFile] = useState(false)
+  const [mode, setMode] = useState<'text' | 'file'>('text')
   const [loading, setLoading] = useState(false)
   const [err, setErr] = useState('')
 
   const load = (offset: number) => {
     setLoading(true)
     api.kbDocPreview(doc.doc_id, offset, 6)
-      .then(r => { setChunks(prev => offset === 0 ? r.chunks : [...prev, ...r.chunks]); setTotal(r.total_chunks) })
+      .then(r => {
+        setChunks(prev => offset === 0 ? r.chunks : [...prev, ...r.chunks])
+        setTotal(r.total_chunks); setHasFile(r.has_file ?? false)
+      })
       .catch(e => setErr(String(e)))
       .finally(() => setLoading(false))
   }
@@ -237,30 +243,65 @@ function DocPreviewModal({ doc, onClose }: { doc: KbDoc; onClose: () => void }) 
 
   return (
     <Modal wide onClose={onClose}
-      title={<span>{doc.source} <span className="num text-faint font-normal">— {doc.pages} стр. · {doc.chunks} фрагм.</span></span>}>
-      {err && <ErrorBox error={err} />}
-      <div className="space-y-4">
-        {chunks.map(c => (
-          <div key={c.chunk_id}>
-            <div className="num text-xs text-faint mb-1">
-              с. {c.page_start}{c.page_end !== c.page_start ? `–${c.page_end}` : ''}
-            </div>
-            <div className="text-sm whitespace-pre-wrap leading-relaxed" style={{ color: 'var(--c-text)' }}>
-              {c.text}
-            </div>
-          </div>
-        ))}
-        {total === 0 && !loading &&
-          <div className="text-faint text-sm">Текста нет — скан без распознанного слоя.</div>}
-        {total !== null && chunks.length < total && (
-          <button className="btn btn-sm" disabled={loading} onClick={() => load(chunks.length)}>
-            {loading
-              ? <span className="inline-block w-4 h-4 rounded-full border-2 border-current border-t-transparent animate-spin" />
-              : <>Показать ещё <span className="num">({chunks.length}/{total})</span></>}
-          </button>
+      title={<span className="inline-flex items-center gap-3">
+        <span className="truncate">{doc.source}</span>
+        <span className="num text-faint font-normal shrink-0">{doc.pages} стр. · {doc.chunks} фрагм.</span>
+        {hasFile && (
+          <Segmented
+            options={[{ value: 'text', label: 'Текст' } as const,
+                      { value: 'file', label: 'Исходник' } as const]}
+            value={mode} onChange={setMode} />
         )}
-      </div>
+      </span>}>
+      {err && <ErrorBox error={err} />}
+      {mode === 'file' && hasFile ? (
+        <iframe title={`Исходник: ${doc.source}`}
+          src={`/api/kb/documents/${encodeURIComponent(doc.doc_id)}/file`}
+          className="w-full rounded-md border border-line bg-white"
+          style={{ height: '68vh' }} />
+      ) : (
+        <div className="space-y-4">
+          {chunks.map(c => (
+            <div key={c.chunk_id}>
+              <div className="num text-xs text-faint mb-1">
+                с. {c.page_start}{c.page_end !== c.page_start ? `–${c.page_end}` : ''}
+              </div>
+              <div className="text-sm whitespace-pre-wrap leading-relaxed" style={{ color: 'var(--c-text)' }}>
+                {c.text}
+              </div>
+            </div>
+          ))}
+          {total === 0 && !loading &&
+            <div className="text-faint text-sm">Текста нет — скан без распознанного слоя.</div>}
+          {total !== null && chunks.length < total && (
+            <button className="btn btn-sm" disabled={loading} onClick={() => load(chunks.length)}>
+              {loading
+                ? <span className="inline-block w-4 h-4 rounded-full border-2 border-current border-t-transparent animate-spin" />
+                : <>Показать ещё <span className="num">({chunks.length}/{total})</span></>}
+            </button>
+          )}
+        </div>
+      )}
     </Modal>
+  )
+}
+
+/** Тумблер «участвует ли источник в поиске» — с подписью, а не голая галочка. */
+function SearchSwitch({ on, onToggle }: { on: boolean; onToggle: () => void }) {
+  return (
+    <button type="button" role="switch" aria-checked={on} onClick={onToggle}
+      className="inline-flex items-center gap-2 cursor-pointer select-none"
+      title={on ? 'Источник участвует в поиске и цитатах гипотез. Нажмите, чтобы временно исключить.'
+               : 'Источник исключён: не участвует в поиске и новых цитатах. Нажмите, чтобы включить обратно.'}>
+      <span className="relative inline-block w-[34px] h-[18px] rounded-full transition-colors"
+        style={{ background: on ? 'var(--c-brand)' : 'var(--c-line)' }}>
+        <span className="absolute top-[2px] w-[14px] h-[14px] rounded-full bg-white transition-all"
+          style={{ left: on ? '18px' : '2px', boxShadow: '0 1px 2px rgba(0,0,0,.25)' }} />
+      </span>
+      <span className={`text-xs whitespace-nowrap ${on ? 'text-brand font-medium' : 'text-faint'}`}>
+        {on ? 'в поиске' : 'выключен'}
+      </span>
+    </button>
   )
 }
 
@@ -393,7 +434,7 @@ export default function KB() {
 
       <Panel
         title="Документы"
-        subtitle="Источники цитат для гипотез: клик по названию — читать, галочка — учитывать в поиске"
+        subtitle="Источники цитат для гипотез: клик по названию — читать; тумблер «в поиске» временно исключает источник"
         bodyClass="p-0"
         actions={
           <>
@@ -418,7 +459,7 @@ export default function KB() {
           <table className="tbl">
             <thead>
               <tr>
-                <th className="w-8" title="Учитывать источник в поиске и цитатах"></th>
+                <th title="Участвует ли источник в поиске и цитатах гипотез">В поиске</th>
                 <th>Источник</th>
                 <th>Язык</th>
                 <th className="text-right">Стр.</th>
@@ -431,14 +472,8 @@ export default function KB() {
               {tabDocs.map(d => {
                 const on = d.enabled !== false
                 return (
-                  <tr key={d.doc_id} className={on ? '' : 'opacity-45'}>
-                    <td>
-                      <input type="checkbox" checked={on}
-                        className="accent-brand w-4 h-4 cursor-pointer align-middle"
-                        title={on ? 'Источник учитывается в поиске — снять, чтобы выключить'
-                                 : 'Источник выключен — не участвует в поиске и цитатах'}
-                        onChange={() => toggleDoc(d)} />
-                    </td>
+                  <tr key={d.doc_id} className={on ? '' : 'opacity-55'}>
+                    <td><SearchSwitch on={on} onToggle={() => toggleDoc(d)} /></td>
                     <td className="max-w-md">
                       <button type="button"
                         className="text-left truncate max-w-full hover:text-brand hover:underline underline-offset-2 cursor-pointer align-middle"
@@ -446,7 +481,6 @@ export default function KB() {
                         onClick={() => setPreview(d)}>
                         {d.source}
                       </button>
-                      {!on && <Badge tone="default">выключен</Badge>}
                     </td>
                     <td><Badge>{LANG_LABEL[langOf(d)]}</Badge></td>
                     <td className="num text-right">{d.pages}</td>

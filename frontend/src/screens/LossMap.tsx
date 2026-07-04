@@ -3,7 +3,7 @@ import { useNavigate, useParams } from 'react-router-dom'
 import { api, fmt } from '../api'
 import type { DiagnosticsResult, FlowsheetData, FlowsheetNode, TailingsReport } from '../types'
 import {
-  Badge, EmptyBox, ErrorBox, Icon, PageHeader, Panel, SectionLabel, Segmented, Spinner,
+  Badge, EmptyBox, ErrorBox, Icon, Modal, PageHeader, Panel, SectionLabel, Segmented, Spinner,
 } from '../components/common'
 
 const FORMS = ['Раскрытый Pnt/Cp', 'Закрытый Pnt/Cp', 'Примесь в пирротине',
@@ -18,15 +18,38 @@ const TYPE_LABEL: Record<string, string> = {
   flotation: 'Флотация', thickening: 'Сгущение', magnetic: 'Магнитная', gravity: 'Гравитация',
 }
 
+/** Исходные изображения схем/регламента, из которых оцифрован флоушит. */
+function FlowsheetSources({ factory, files, onClose }: {
+  factory: string; files: string[]; onClose: () => void
+}) {
+  return (
+    <Modal wide onClose={onClose}
+      title={`Исходные схемы: ${factory} (оцифровано с ${files.length} изображений)`}>
+      <div className="space-y-5">
+        {files.map((name, i) => (
+          <figure key={name}>
+            <figcaption className="text-xs text-muted mb-1.5">{name}</figcaption>
+            <img src={`/api/flowsheet-image/${encodeURIComponent(factory)}/${i}`}
+              alt={name} loading="lazy"
+              className="max-w-full rounded-md border border-line bg-white" />
+          </figure>
+        ))}
+      </div>
+    </Modal>
+  )
+}
+
 /** Граф переделов из оцифрованного регламента фабрики (реальные названия операций). */
 function FlowsheetGraph({ factory, fs, highlight }: {
   factory: string | null; fs: FlowsheetData; highlight: Set<string>
 }) {
+  const [showSources, setShowSources] = useState(false)
   const groups = TYPE_ORDER
     .map(t => ({ type: t, nodes: fs.nodes.filter(n => n.type === t) }))
     .filter(g => g.nodes.length > 0)
   const tails = fs.streams.filter(s => s.kind === 'tails')
   const tailFrom = new Set(tails.map(s => s.from))
+  const sources = fs.source_files ?? []
 
   const regime = (n: FlowsheetNode) => {
     const bits: string[] = []
@@ -41,7 +64,14 @@ function FlowsheetGraph({ factory, fs, highlight }: {
     <Panel
       title={`Схема фабрики: ${factory}`}
       subtitle="по оцифрованному регламенту; подсвечены переделы сработавших диагнозов"
-      bodyClass="p-3 overflow-x-auto">
+      bodyClass="p-3 overflow-x-auto"
+      actions={sources.length > 0 && factory ? (
+        <button className="btn btn-sm" title="Показать изображения, с которых оцифрована схема"
+          onClick={() => setShowSources(true)}>
+          <Icon name="search" className="w-4 h-4" />
+          Исходные схемы <span className="num">({sources.length})</span>
+        </button>
+      ) : undefined}>
       <div className="flex items-stretch gap-1 min-w-max pb-1">
         {groups.map((g, gi) => (
           <div key={g.type} className="flex items-center gap-1">
@@ -75,6 +105,10 @@ function FlowsheetGraph({ factory, fs, highlight }: {
           </div>
         ))}
       </div>
+      {showSources && factory && (
+        <FlowsheetSources factory={factory} files={sources}
+          onClose={() => setShowSources(false)} />
+      )}
     </Panel>
   )
 }

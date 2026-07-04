@@ -149,7 +149,7 @@ export const api = {
   kbDocPreview: (docId: string, offset = 0, limit = 6) =>
     j<{
       doc_id: string; source: string; pages: number; status: string
-      total_chunks: number; offset: number
+      total_chunks: number; offset: number; has_file?: boolean
       chunks: { chunk_id: string; page_start: number; page_end: number; text: string }[]
     }>(fetch(`/api/kb/documents/${encodeURIComponent(docId)}/preview?offset=${offset}&limit=${limit}`)),
   kbSetEnabled: (docId: string, enabled: boolean) =>

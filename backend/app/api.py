@@ -341,6 +341,27 @@ def get_project_flowsheet(pid: str, store: Store = Depends(get_store)) -> dict:
             "flowsheet": flowsheet, "rule_node_types": RULE_NODE_TYPES}
 
 
+@router.get("/flowsheet-image/{factory}/{idx}")
+def flowsheet_image(factory: str, idx: int):
+    """Исходное изображение оцифрованной схемы (data/case) по индексу
+    в source_files флоушита фабрики."""
+    import os as _os
+    from pathlib import Path
+    from fastapi.responses import FileResponse
+    from .config import DATA_CASE
+    from .flowsheet import get_flowsheet
+    fs = get_flowsheet(factory)
+    files = (fs or {}).get("source_files") or []
+    if not 0 <= idx < len(files):
+        raise HTTPException(404, "схема не найдена")
+    want = unicodedata.normalize("NFC", files[idx])
+    for dirpath, _dirs, fnames in _os.walk(DATA_CASE):
+        for f in fnames:
+            if unicodedata.normalize("NFC", f) == want:
+                return FileResponse(Path(dirpath) / f, media_type="image/png")
+    raise HTTPException(404, f"файл схемы «{files[idx]}» не найден в data/case")
+
+
 # ---------- гипотезы ----------
 class GenerateIn(BaseModel):
     weights: dict | None = None
@@ -552,11 +573,14 @@ async def kb_upload(file: UploadFile, kb: KBIndex = Depends(get_kb)) -> dict:
     low = name.lower()
     if low.endswith(".txt"):
         from .kb.ingest import ingest_text
-        return await run_in_threadpool(ingest_text, data, name, kb)
+        result = await run_in_threadpool(ingest_text, data, name, kb)
+        _save_kb_original(data, name, result["doc_id"])
+        return result
     if not low.endswith(".pdf"):
         raise HTTPException(422, "поддерживаются PDF и TXT")
     # чанкование + dense-эмбеддинг — минуты для больших книг: не блокируем event loop
     result = await run_in_threadpool(ingest_pdf, data, name, kb)
+    _save_kb_original(data, name, result["doc_id"])
     if result["status"] == "scan_no_text":
         from .kb import ocr as kb_ocr
         if kb_ocr.available():
@@ -600,6 +624,49 @@ def kb_documents(kb: KBIndex = Depends(get_kb)) -> list[dict]:
     return kb.documents()
 
 
+def _kb_source_file(source: str, doc_id: str):
+    """Исходный файл источника: сохранённая загрузка (storage/kb/files) или
+    файлы репозитория (data/kb/books|extra) / кейса (data/case) по имени."""
+    import os as _os
+    from pathlib import Path
+    from .config import DATA_CASE, ROOT, STORAGE
+    src = unicodedata.normalize("NFC", source)
+    ext = Path(src).suffix.lower()
+    for p in (STORAGE / "kb" / "files" / f"{doc_id}{ext}",
+              ROOT / "data" / "kb" / "books" / src,
+              ROOT / "data" / "kb" / "extra" / src):
+        if p.exists():
+            return p
+    for dirpath, _dirs, files in _os.walk(DATA_CASE):
+        for f in files:
+            if unicodedata.normalize("NFC", f) == src:
+                return Path(dirpath) / f
+    return None
+
+
+def _save_kb_original(data: bytes, name: str, doc_id: str):
+    """Оригинал загруженного файла — чтобы читалка могла показать исходник."""
+    from pathlib import Path
+    from .config import STORAGE
+    files_dir = STORAGE / "kb" / "files"
+    files_dir.mkdir(parents=True, exist_ok=True)
+    (files_dir / f"{doc_id}{Path(name).suffix.lower()}").write_bytes(data)
+
+
+@router.get("/kb/documents/{doc_id}/file")
+def kb_document_file(doc_id: str, kb: KBIndex = Depends(get_kb)):
+    """Исходник источника (PDF/TXT) — для вкладки «Исходник» в читалке."""
+    from fastapi.responses import FileResponse
+    if doc_id not in kb.docs:
+        raise HTTPException(404, "документ не найден")
+    p = _kb_source_file(kb.docs[doc_id]["source"], doc_id)
+    if not p:
+        raise HTTPException(404, "исходный файл недоступен на сервере")
+    media = "application/pdf" if p.suffix.lower() == ".pdf" else "text/plain; charset=utf-8"
+    return FileResponse(p, media_type=media, filename=p.name,
+                        content_disposition_type="inline")
+
+
 @router.get("/kb/documents/{doc_id}/preview")
 def kb_document_preview(doc_id: str, offset: int = 0, limit: int = 6,
                         kb: KBIndex = Depends(get_kb)) -> dict:
@@ -612,6 +679,7 @@ def kb_document_preview(doc_id: str, offset: int = 0, limit: int = 6,
     meta = kb.docs[doc_id]
     return {"doc_id": doc_id, "source": meta["source"], "pages": meta.get("pages"),
             "status": meta.get("status"), "total_chunks": len(part), "offset": offset,
+            "has_file": _kb_source_file(meta["source"], doc_id) is not None,
             "chunks": [{"chunk_id": c["chunk_id"], "page_start": c["page_start"],
                         "page_end": c["page_end"], "text": c["text"]} for c in sel]}
 

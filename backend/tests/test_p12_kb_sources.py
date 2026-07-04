@@ -8,6 +8,7 @@ import pytest
 from backend.app.kb.index import KBIndex, detect_lang
 from backend.app.kb.ingest import ingest_pdf, ingest_text
 from backend.app.kb.textnorm import chunk_pages
+from backend.tests.conftest import requires_data
 
 
 RU = ("Флотация сульфидных минералов: пентландит и халькопирит поднимаются "
@@ -186,6 +187,50 @@ def test_doc_lang_tie_deterministic():
     from backend.app.kb.index import doc_lang
     assert doc_lang([RU, EN]) == "ru", "при ничьей приоритет ru"
     assert doc_lang([EN, ZH]) == "en", "затем en"
+
+
+def test_kb_document_file_endpoint(tmp_path, monkeypatch):
+    """Вкладка «Исходник»: отдача оригинала из storage/kb/files + has_file в превью."""
+    from fastapi.testclient import TestClient
+
+    import backend.app.api as api
+    import backend.app.config as config
+    from backend.app.main import app
+
+    monkeypatch.setattr(config, "STORAGE", tmp_path / "st")
+    idx = KBIndex(root=tmp_path / "kb", use_dense=False)
+    pages = [(1, RU)]
+    idx.add_document("d1", "патент.txt", pages, chunk_pages(pages, target=200))
+    files_dir = tmp_path / "st" / "kb" / "files"
+    files_dir.mkdir(parents=True)
+    (files_dir / "d1.txt").write_text(RU, encoding="utf-8")
+
+    app.dependency_overrides[api.get_kb] = lambda: idx
+    try:
+        client = TestClient(app)
+        r = client.get("/api/kb/documents/d1/file")
+        assert r.status_code == 200
+        assert "флотация" in r.text.lower()
+        assert client.get("/api/kb/documents/d1/preview").json()["has_file"] is True
+        assert client.get("/api/kb/documents/нет/file").status_code == 404
+    finally:
+        app.dependency_overrides.clear()
+
+
+@requires_data
+def test_flowsheet_image_endpoint():
+    """Исходные изображения оцифрованной схемы отдаются по индексу source_files."""
+    from fastapi.testclient import TestClient
+
+    from backend.app.main import app
+
+    client = TestClient(app)
+    r = client.get("/api/flowsheet-image/НОФ/0")
+    assert r.status_code == 200
+    assert r.headers["content-type"].startswith("image/")
+    assert len(r.content) > 10_000, "это реальный PNG, не заглушка"
+    assert client.get("/api/flowsheet-image/НОФ/99").status_code == 404
+    assert client.get("/api/flowsheet-image/НЕТ-ТАКОЙ/0").status_code == 404
 
 
 def test_kb_document_preview_endpoint(tmp_path):

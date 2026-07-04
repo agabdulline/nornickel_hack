@@ -130,7 +130,9 @@ function ProjectLayout() {
           <Route path="map" element={<LossMap />} />
           <Route path="hypotheses" element={<Hypotheses />} />
           <Route path="export" element={<ExportScreen />} />
-          <Route path="*" element={<Navigate to="report" replace />} />
+          {/* абсолютный путь: относительный `to` внутри splat-роута резолвится
+              от текущего URL и даёт бесконечный редирект /x/report/report/… */}
+          <Route path="*" element={<Navigate to={`/p/${pid}/report`} replace />} />
         </Routes>
       </main>
       {chatOpen && <ChatPanel pid={pid} onClose={() => setChatOpen(false)} />}

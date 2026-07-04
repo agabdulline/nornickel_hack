@@ -87,7 +87,8 @@ def test_tier2_no_llm_graceful():
 
     n = recover_llm(r, llm=DeadLLM())
     assert n == 0
-    assert any("не восстановлены" in i.message for i in r.issues)
+    assert any("впишите вручную" in i.message for i in r.issues), \
+        "без LLM битые ячейки помечаются к ручной проверке"
 
 
 @requires_data

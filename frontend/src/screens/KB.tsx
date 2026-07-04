@@ -336,6 +336,22 @@ function DocPreviewModal({ doc, onClose }: { doc: KbDoc; onClose: () => void }) 
               Машинный перевод — термины и числа сверяйте с оригиналом.
             </div>
           )}
+          {/* начальная загрузка: скелетон текста вместо пустого поля */}
+          {loading && chunks.length === 0 && (
+            <div className="space-y-5" aria-label="Загружаю текст…">
+              {[92, 78, 85].map((w, b) => (
+                <div key={b}>
+                  <div className="skeleton h-3 w-14 mb-2" />
+                  <div className="space-y-1.5">
+                    <div className="skeleton h-3.5 w-full" />
+                    <div className="skeleton h-3.5" style={{ width: `${w}%` }} />
+                    <div className="skeleton h-3.5" style={{ width: `${w - 8}%` }} />
+                    <div className="skeleton h-3.5" style={{ width: `${Math.round(w * 0.6)}%` }} />
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
           {chunks.map(c => (
             <div key={c.chunk_id}>
               <div className="num text-xs text-faint mb-1">

@@ -164,7 +164,7 @@ function HypCard({ h, rank, onFeedback, onChunk }: {
   const present = h.equipment.filter(e => e.present_on_plant)
 
   const accent = h.status === 'accepted'
-    ? { borderLeft: '4px solid var(--c-ok)' }
+    ? { borderLeft: '4px solid var(--c-ok)', background: 'color-mix(in srgb, var(--c-ok) 6%, var(--c-surface))' }
     : h.status === 'rejected'
       ? { borderLeft: '4px solid var(--c-danger)' }
       : undefined
@@ -290,13 +290,25 @@ function HypCard({ h, rank, onFeedback, onChunk }: {
 
           <div className="text-xs text-faint">{h.effect.assumptions}</div>
 
-          <div className="flex gap-2 pt-3 border-t border-line items-center">
-            <button className="btn btn-ok" onClick={e => { e.stopPropagation(); onFeedback(h, 'accept') }}>
-              <Icon name="check" />Принять
-            </button>
-            <button className="btn btn-danger" onClick={e => { e.stopPropagation(); onFeedback(h, 'reject') }}>
-              <Icon name="x" />Отклонить…
-            </button>
+          <div className="flex gap-2 pt-3 border-t border-line items-center flex-wrap">
+            {h.status === 'accepted' ? (<>
+              <span className="badge badge-ok"><Icon name="check" className="w-3.5 h-3.5" />Принята</span>
+              <button className="btn btn-danger btn-sm" onClick={e => { e.stopPropagation(); onFeedback(h, 'reject') }}>
+                <Icon name="x" />Передумать — отклонить
+              </button>
+            </>) : h.status === 'rejected' ? (<>
+              <span className="badge badge-danger"><Icon name="x" className="w-3.5 h-3.5" />Отклонена</span>
+              <button className="btn btn-ok btn-sm" onClick={e => { e.stopPropagation(); onFeedback(h, 'accept') }}>
+                <Icon name="check" />Всё-таки принять
+              </button>
+            </>) : (<>
+              <button className="btn btn-ok" onClick={e => { e.stopPropagation(); onFeedback(h, 'accept') }}>
+                <Icon name="check" />Принять
+              </button>
+              <button className="btn btn-danger" onClick={e => { e.stopPropagation(); onFeedback(h, 'reject') }}>
+                <Icon name="x" />Отклонить…
+              </button>
+            </>)}
             <span className="ml-auto num text-xs text-faint self-center">
               score {h.score.toFixed(3)} · id {h.id}
             </span>

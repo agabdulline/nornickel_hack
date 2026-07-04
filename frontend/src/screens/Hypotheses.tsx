@@ -125,8 +125,13 @@ export default function Hypotheses() {
   const feedback = async (h: Hypothesis, action: 'accept' | 'reject') => {
     let reason = ''
     if (action === 'reject') {
-      reason = window.prompt('Причина отклонения (уйдёт в стоп-лист регенерации):') ?? ''
-      if (reason === '') return
+      // причина необязательна. Отклонённое направление в любом случае запоминается
+      // в стоп-листе ЛИНИИ (виден в «Базе знаний») — регенерация не предложит его
+      // снова, в т.ч. в будущих проектах этой линии. Причина уточняет, чего избегать.
+      // Отмена диалога (null) — единственный случай, когда ничего не делаем.
+      const r = window.prompt('Причина отклонения (необязательно). Направление запомнится для этой линии — регенерация не предложит его снова:')
+      if (r === null) return
+      reason = r
     }
     try {
       await api.feedback(h.id, action, reason)
@@ -310,15 +315,23 @@ function HypCard({ h, rank, onFeedback, onChunk, weights, moneyLo, moneyHi }: {
   const matches = (h.novelty?.prior_matches ?? []).filter(m => m !== h.title)
   const hasPrior = matches.length > 0
 
+  // визуальная прогрессия: принята — только бортик; подтверждена — зелёная
+  // заливка (сильнее); отклонена — красная заливка; на проверке — янтарная.
   const accent = h.status === 'accepted'
-    ? { borderLeft: '4px solid var(--c-ok)', background: 'color-mix(in srgb, var(--c-ok) 6%, var(--c-surface))' }
-    : h.status === 'rejected'
-      ? { borderLeft: '4px solid var(--c-danger)' }
-      : undefined
+    ? { borderLeft: '4px solid var(--c-ok)' }
+    : h.status === 'confirmed'
+      ? { borderLeft: '4px solid var(--c-ok)', background: 'color-mix(in srgb, var(--c-ok) 12%, var(--c-surface))' }
+      : h.status === 'testing'
+        ? { borderLeft: '4px solid var(--c-warn)', background: 'color-mix(in srgb, var(--c-warn) 8%, var(--c-surface))' }
+        : h.status === 'rejected'
+          ? { borderLeft: '4px solid var(--c-danger)', background: 'color-mix(in srgb, var(--c-danger) 8%, var(--c-surface))' }
+          : undefined
 
   return (
-    <div data-hl={`hypothesis:${h.id}`}
-      className={`card hover-lift ${h.status === 'rejected' ? 'opacity-60' : ''}`} style={accent}>
+    // data-hl — якорь подсветки из чата (highlight.ts); opacity-60 для rejected
+    // намеренно убран, чтобы красная заливка «отклонена» была насыщенной
+    <div data-hl={`hypothesis:${h.id}`} className="card hover-lift" style={accent}>
+
       <div className="p-3 flex items-start gap-3 cursor-pointer" onClick={() => setOpen(o => !o)}>
         <div className="num text-2xl font-bold w-8 text-right shrink-0 text-faint">{rank}</div>
         <div className="flex-1 min-w-0">
@@ -359,6 +372,8 @@ function HypCard({ h, rank, onFeedback, onChunk, weights, moneyLo, moneyHi }: {
             )}
             {h.uncertain && <Badge tone="warn">оценка на непроверенных данных</Badge>}
             {h.status === 'accepted' && <Badge tone="solid">принята</Badge>}
+            {h.status === 'testing' && <Badge tone="warn">на проверке</Badge>}
+            {h.status === 'confirmed' && <Badge tone="ok">подтверждена</Badge>}
             {h.status === 'rejected' && <Badge tone="danger">отклонена</Badge>}
           </div>
         </div>

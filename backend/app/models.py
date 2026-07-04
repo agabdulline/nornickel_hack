@@ -166,6 +166,27 @@ class LineMaterial(BaseModel):
     unit: str = "т"
 
 
+class StopEntry(BaseModel):
+    """Отклонённое направление на уровне объекта/линии — «память» фидбэка.
+
+    Живёт на линии (line_id = Project.plant), а не на проекте: следующий
+    проект по той же линии подхватывает прошлые отклонения, а несвязанные
+    фабрики они не затрагивают (см. constraints_for_project — тот же принцип
+    line-scoped мастер-данных, что у оборудования и сырья).
+
+    direction — заголовок отклонённой гипотезы (что не предлагать снова),
+    reason — свободная причина эксперта. В стоп-лист генерации уходит и то,
+    и другое; в «Базе знаний» эксперт видит список и может убрать запись.
+    """
+    id: str
+    line_id: str
+    direction: str = ""
+    reason: str = ""
+    project_id: str | None = None      # из какого проекта пришло (провенанс)
+    hypothesis_id: str | None = None   # какая гипотеза (для снятия при «всё-таки принять»)
+    created_at: str = ""
+
+
 class Effect(BaseModel):
     tonnes_max: float = 0.0
     tonnes_expected: float = 0.0

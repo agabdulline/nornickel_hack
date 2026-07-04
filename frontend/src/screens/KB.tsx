@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { api } from '../api'
-import type { Equipment, KbDoc, Line, LineKind, LineMaterial, Material, LineOwnership } from '../types'
+import type { Equipment, KbDoc, Line, LineKind, LineMaterial, Material, LineOwnership, StopEntry } from '../types'
 import { Badge, ChunkModal, ErrorBox, Icon, Modal, Panel, SectionLabel, Segmented, reflowPdfText } from '../components/common'
 import {
   commitLineEdits, type DraftEquipment, type DraftMaterial, EquipmentRows, MaterialRows,
@@ -23,6 +23,7 @@ function LinesSection() {
   const [expanded, setExpanded] = useState<string | null>(null)
   const [equipment, setEquipment] = useState<Equipment[]>([])
   const [materials, setMaterials] = useState<LineMaterial[]>([])
+  const [stoplist, setStoplist] = useState<StopEntry[]>([])
   const [creating, setCreating] = useState(false)
   const [newName, setNewName] = useState('')
   const [newKind, setNewKind] = useState<LineKind>('производственная линия')
@@ -39,9 +40,17 @@ function LinesSection() {
   useEffect(() => { api.materials().then(setMaterialsCatalog).catch(() => setMaterialsCatalog([])) }, [])
 
   const fetchLineData = async (line: Line) => {
-    const [eq, mats] = await Promise.all([api.equipmentForLine(line.id), api.lineMaterials(line.id)])
-    setEquipment(eq); setMaterials(mats)
-    return { eq, mats }
+    const [eq, mats, stop] = await Promise.all([
+      api.equipmentForLine(line.id), api.lineMaterials(line.id), api.lineStoplist(line.id),
+    ])
+    setEquipment(eq); setMaterials(mats); setStoplist(stop)
+    return { eq, mats, stop }
+  }
+
+  const deleteStop = async (line: Line, id: string) => {
+    setStoplist(prev => prev.filter(s => s.id !== id))   // оптимистично
+    try { await api.deleteLineStop(id) }
+    catch { fetchLineData(line) }                        // откат — перечитать
   }
 
   const toggleExpand = async (line: Line) => {
@@ -197,6 +206,41 @@ function LinesSection() {
                             </Badge>
                           ))}
                         </div>
+                      </div>
+                      <div>
+                        <SectionLabel>Стоп-лист линии</SectionLabel>
+                        {stoplist.length === 0 ? (
+                          <div className="text-sm text-faint">
+                            Отклонённых направлений пока нет — они накапливаются, когда
+                            эксперт отклоняет гипотезу на любом проекте этой линии, и
+                            исключаются при следующей генерации.
+                          </div>
+                        ) : (
+                          <div className="space-y-1.5">
+                            {stoplist.map(s => (
+                              <div key={s.id}
+                                className="flex items-start justify-between gap-2 rounded-md border border-line bg-surface-2 px-2.5 py-2">
+                                <div className="min-w-0">
+                                  <div className="text-sm text-text font-medium">{s.direction || '—'}</div>
+                                  {s.reason && (
+                                    <div className="text-xs text-muted mt-0.5">Причина: {s.reason}</div>
+                                  )}
+                                  {s.created_at && (
+                                    <div className="num text-[11px] text-faint mt-0.5">
+                                      отклонено {new Date(s.created_at).toLocaleDateString('ru-RU')}
+                                    </div>
+                                  )}
+                                </div>
+                                <button type="button"
+                                  className="btn btn-ghost btn-sm text-danger px-1.5 shrink-0"
+                                  title="Убрать из стоп-листа — направление снова сможет предлагаться"
+                                  onClick={() => deleteStop(line, s.id)}>
+                                  <Icon name="trash" className="w-4 h-4" />
+                                </button>
+                              </div>
+                            ))}
+                          </div>
+                        )}
                       </div>
                     </>
                   )}

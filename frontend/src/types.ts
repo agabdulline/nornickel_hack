@@ -29,6 +29,12 @@ export interface ProjectConstraints {
   materials: LineMaterial[];
 }
 
+// Отклонённое направление на уровне линии (память фидбэка) — см. «Базу знаний»
+export interface StopEntry {
+  id: string; line_id: string; direction: string; reason: string;
+  project_id?: string | null; hypothesis_id?: string | null; created_at?: string;
+}
+
 export interface Project {
   id: string; name: string; plant: string; goal: string; constraints: string;
   created_at: string; weights: Record<string, number>; stoplist: string[];

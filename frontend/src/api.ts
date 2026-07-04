@@ -1,7 +1,7 @@
 import type {
   ChatAnswer, ChatChart, ChatMeta, ChatReference, DiagnosticsResult, Equipment,
   FlowsheetData, Hypothesis, KbDoc, Line, LineMaterial, Material, Project,
-  ProjectConstraints, RoadmapItem, TailingsReport,
+  ProjectConstraints, RoadmapItem, StopEntry, TailingsReport,
 } from './types'
 
 export interface ChatHistoryMsg {
@@ -55,6 +55,12 @@ export const api = {
       method: 'PATCH', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
     })),
+
+  // ---------- стоп-лист линии (память фидбэка по объекту) ----------
+  lineStoplist: (lineId: string) =>
+    j<StopEntry[]>(fetch(`/api/lines/${encodeURIComponent(lineId)}/stoplist`)),
+  deleteLineStop: (id: string) =>
+    j<{ ok: boolean }>(fetch(`/api/line-stoplist/${encodeURIComponent(id)}`, { method: 'DELETE' })),
 
   // ---------- справочник материалов ----------
   materials: () => j<Material[]>(fetch('/api/materials')),
@@ -134,9 +140,15 @@ export const api = {
     })),
   hypotheses: (pid: string) => j<Hypothesis[]>(fetch(`/api/projects/${pid}/hypotheses`)),
   feedback: (hid: string, action: 'accept' | 'reject', reason = '') =>
-    j<{ status: string; stoplist: string[] }>(fetch(`/api/hypotheses/${hid}/feedback`, {
+    j<{ status: string; line_stoplist: StopEntry[] }>(fetch(`/api/hypotheses/${hid}/feedback`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ action, reason }),
+    })),
+  // перенос гипотезы между колонками канбана (Отчёт) — только смена статуса
+  setHypothesisStatus: (hid: string, status: string) =>
+    j<{ id: string; status: string }>(fetch(`/api/hypotheses/${hid}/status`, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status }),
     })),
 
   // историю хранит сервер (по диалогам) — клиент шлёт вопрос, chat_id

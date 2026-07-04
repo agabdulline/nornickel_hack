@@ -70,12 +70,14 @@ def test_full_flow_example2(client):
     matched = [h for h in hyps if h["novelty"]["prior_matches"]]
     assert matched, "мок-гипотезы пересекаются с эталонными — бейдж должен появиться"
 
-    # 5. фидбэк: reject с причиной -> стоп-лист
+    # 5. фидбэк: reject с причиной -> стоп-лист ЛИНИИ (направление + причина)
     hid = hyps[0]["id"]
     r = client.post(f"/api/hypotheses/{hid}/feedback",
                     json={"action": "reject", "reason": "футеровка уже меняется по графику"})
     assert r.status_code == 200
-    assert "футеровка уже меняется по графику" in r.json()["stoplist"]
+    sl = r.json()["line_stoplist"]
+    assert any(e["reason"] == "футеровка уже меняется по графику"
+               and e["direction"] == hyps[0]["title"] for e in sl)
 
     # 6. accept второй
     r = client.post(f"/api/hypotheses/{hyps[1]['id']}/feedback", json={"action": "accept"})

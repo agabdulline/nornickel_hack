@@ -15,7 +15,7 @@ from pathlib import Path
 
 from .config import STORAGE
 from .models import (Equipment, Hypothesis, Line, LineMaterial, Material, Project,
-                     ProjectConstraints, TailingsReport)
+                     ProjectConstraints, StopEntry, TailingsReport)
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS projects (
@@ -49,6 +49,10 @@ CREATE TABLE IF NOT EXISTS materials (
 CREATE TABLE IF NOT EXISTS line_materials (
   id TEXT PRIMARY KEY, line_id TEXT, material_id TEXT, name TEXT,
   quantity REAL, unit TEXT
+);
+CREATE TABLE IF NOT EXISTS line_stoplist (
+  id TEXT PRIMARY KEY, line_id TEXT, direction TEXT, reason TEXT,
+  project_id TEXT, hypothesis_id TEXT, created_at TEXT
 );
 CREATE TABLE IF NOT EXISTS chats (
   id TEXT PRIMARY KEY, project_id TEXT, title TEXT, created_at TEXT, updated_at TEXT
@@ -474,6 +478,70 @@ class Store:
     def delete_equipment(self, eq_id: str) -> bool:
         with self._lock:
             cur = self._conn.execute("DELETE FROM equipment WHERE id=?", (eq_id,))
+            self._conn.commit()
+            return cur.rowcount > 0
+
+    # ---------- стоп-лист линии (память фидбэка, line-scoped) ----------
+    def _row_to_stop(self, r) -> StopEntry:
+        return StopEntry(id=r["id"], line_id=r["line_id"], direction=r["direction"] or "",
+                         reason=r["reason"] or "", project_id=r["project_id"],
+                         hypothesis_id=r["hypothesis_id"], created_at=r["created_at"] or "")
+
+    def list_line_stoplist(self, line_id: str) -> list[StopEntry]:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT * FROM line_stoplist WHERE line_id=? ORDER BY created_at DESC, rowid DESC",
+                (line_id,)).fetchall()
+            return [self._row_to_stop(r) for r in rows]
+
+    def add_line_stop(self, line_id: str, direction: str = "", reason: str = "",
+                      project_id: str | None = None,
+                      hypothesis_id: str | None = None) -> StopEntry:
+        """Записывает отклонённое направление в стоп-лист линии.
+
+        Идемпотентно по (line_id, hypothesis_id): повторное отклонение той же
+        гипотезы обновляет причину, а не плодит дубли. Для ручных записей без
+        гипотезы дедуп по направлению (без учёта регистра)."""
+        with self._lock:
+            existing = None
+            if hypothesis_id:
+                existing = self._conn.execute(
+                    "SELECT id FROM line_stoplist WHERE line_id=? AND hypothesis_id=?",
+                    (line_id, hypothesis_id)).fetchone()
+            elif direction.strip():
+                existing = self._conn.execute(
+                    "SELECT id FROM line_stoplist WHERE line_id=? AND lower(direction)=lower(?)",
+                    (line_id, direction.strip())).fetchone()
+            if existing:
+                self._conn.execute(
+                    "UPDATE line_stoplist SET direction=?, reason=?, project_id=?, created_at=? WHERE id=?",
+                    (direction.strip(), reason.strip(), project_id, _now(), existing["id"]))
+                self._conn.commit()
+                row = self._conn.execute("SELECT * FROM line_stoplist WHERE id=?",
+                                         (existing["id"],)).fetchone()
+                return self._row_to_stop(row)
+            entry = StopEntry(id=uuid.uuid4().hex[:10], line_id=line_id,
+                              direction=direction.strip(), reason=reason.strip(),
+                              project_id=project_id, hypothesis_id=hypothesis_id, created_at=_now())
+            self._conn.execute(
+                "INSERT INTO line_stoplist VALUES (?,?,?,?,?,?,?)",
+                (entry.id, entry.line_id, entry.direction, entry.reason,
+                 entry.project_id, entry.hypothesis_id, entry.created_at))
+            self._conn.commit()
+        return entry
+
+    def remove_line_stop_for_hypothesis(self, hypothesis_id: str) -> int:
+        """Снимает гипотезу со стоп-листа (по всем линиям) — вызывается при
+        «всё-таки принять», чтобы принятое направление снова могло предлагаться."""
+        with self._lock:
+            cur = self._conn.execute(
+                "DELETE FROM line_stoplist WHERE hypothesis_id=?", (hypothesis_id,))
+            self._conn.commit()
+            return cur.rowcount
+
+    def delete_line_stop(self, stop_id: str) -> bool:
+        with self._lock:
+            cur = self._conn.execute("DELETE FROM line_stoplist WHERE id=?", (stop_id,))
             self._conn.commit()
             return cur.rowcount > 0
 

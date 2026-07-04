@@ -17,7 +17,7 @@ from .kb.index import KBIndex, default_index
 from .kb.ingest import ingest_pdf
 from .llm import client as llm_client
 from .models import (Equipment, Hypothesis, Line, LineMaterial, Material, Project,
-                     ProjectConstraints, TailingsReport)
+                     ProjectConstraints, StopEntry, TailingsReport)
 from .parser.docx import parse_expert_hypotheses
 from .parser.recover import recover
 from .parser.xlsx import parse_workbook
@@ -83,6 +83,20 @@ def update_line(line_id: str, body: LinePatch, store: Store = Depends(get_store)
     if not line:
         raise HTTPException(404, "линия не найдена")
     return line
+
+
+# ---------- стоп-лист линии (память фидбэка по объекту) ----------
+@router.get("/lines/{line_id}/stoplist")
+def line_stoplist(line_id: str, store: Store = Depends(get_store)) -> list[StopEntry]:
+    """Отклонённые направления этой линии — видны в «Базе знаний».
+    Накапливаются, когда эксперт отклоняет гипотезу на любом проекте линии."""
+    return store.list_line_stoplist(line_id)
+
+
+@router.delete("/line-stoplist/{stop_id}")
+def delete_line_stop(stop_id: str, store: Store = Depends(get_store)) -> dict:
+    """Убрать запись из стоп-листа линии — направление снова сможет предлагаться."""
+    return {"ok": store.delete_line_stop(stop_id)}
 
 
 # ---------- справочник материалов (переиспользуется в ограничениях проекта) ----------
@@ -399,9 +413,19 @@ def generate(pid: str, body: GenerateIn, store: Store = Depends(get_store),
     from .flowsheet import summarize_for_prompt, zero_reagent_hints
     factory, _fs = _project_flowsheet(pid, store)
     project_equipment = project.project_constraints.equipment
+    # стоп-лист линии (память фидбэка по объекту) + legacy project.stoplist;
+    # каждая запись — «направление — причина», дедуп без учёта регистра
+    stoplist = list(project.stoplist)
+    for s in store.list_line_stoplist(project.plant):
+        entry = f"{s.direction} — {s.reason}" if s.direction and s.reason \
+            else (s.direction or s.reason)
+        if entry:
+            stoplist.append(entry)
+    seen: set[str] = set()
+    stoplist = [x for x in stoplist if not (x.lower() in seen or seen.add(x.lower()))]
     hyps = generate_hypotheses(
         report, diag, kb_index=kb, llm=llm_client,
-        constraints=project.constraints, stoplist=project.stoplist,
+        constraints=project.constraints, stoplist=stoplist,
         history_titles=history, excluded_areas=body.excluded_areas,
         flowsheet_summary=summarize_for_prompt(factory),
         reagent_hints=zero_reagent_hints(factory, kb_index=kb),
@@ -463,11 +487,40 @@ def feedback(hid: str, body: FeedbackIn, store: Store = Depends(get_store)) -> d
     store.update_hypothesis(h)
     store.add_feedback(hid, pid, body.action, body.reason)
     project = store.get_project(pid)
-    if body.action == "reject" and body.reason.strip():
-        # направление уходит в стоп-лист проекта — регенерация его исключит
-        project.stoplist.append(body.reason.strip())
-        store.update_project(project)
-    return {"id": hid, "status": h.status, "stoplist": project.stoplist}
+    if body.action == "reject":
+        # Отклонённое направление уходит в стоп-лист ЛИНИИ (project.plant), а не
+        # проекта: следующий проект по той же линии его подхватит. В стоп-лист
+        # идёт заголовок гипотезы (что не предлагать снова) + причина эксперта.
+        store.add_line_stop(project.plant, direction=h.title, reason=body.reason,
+                            project_id=pid, hypothesis_id=hid)
+    else:  # accept — снимаем направление со стоп-листа, если раньше отклоняли
+        store.remove_line_stop_for_hypothesis(hid)
+    return {"id": hid, "status": h.status,
+            "line_stoplist": [s.model_dump() for s in store.list_line_stoplist(project.plant)]}
+
+
+class StatusIn(BaseModel):
+    status: str
+
+
+# колонки канбана на экране «Отчёт»
+_KANBAN_STATUSES = {"proposed", "accepted", "testing", "confirmed", "rejected"}
+
+
+@router.patch("/hypotheses/{hid}/status")
+def set_hypothesis_status(hid: str, body: StatusIn, store: Store = Depends(get_store)) -> dict:
+    """Перенос гипотезы между колонками канбана (drag-and-drop на «Отчёте»).
+    Меняет только статус — персистится в БД и виден на экране «Гипотезы».
+    В отличие от /feedback, не пишет в стоп-лист и лог фидбэка (перенос ≠ вердикт)."""
+    if body.status not in _KANBAN_STATUSES:
+        raise HTTPException(422, f"status: {' | '.join(sorted(_KANBAN_STATUSES))}")
+    got = store.get_hypothesis(hid)
+    if not got:
+        raise HTTPException(404, "гипотеза не найдена")
+    h, _pid = got
+    h.status = body.status
+    store.update_hypothesis(h)
+    return {"id": hid, "status": h.status}
 
 
 from .parser.docx import expert_titles_for_plant  # noqa: E402 — используется в generate()

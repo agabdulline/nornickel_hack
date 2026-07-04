@@ -23,6 +23,14 @@ export default function ExportScreen() {
   const [, setFxTick] = useState(0)
   useEffect(() => { fxReady.then(() => setFxTick(t => t + 1)) }, [])
 
+  // канбан: перенос карточки в другую колонку меняет статус гипотезы (персист в БД,
+  // виден на экране «Гипотезы»). Оптимистично двигаем локально, при ошибке — откат.
+  const moveHypothesis = async (id: string, status: string) => {
+    setHyps(prev => prev && prev.map(h => (h.id === id ? { ...h, status } : h)))
+    try { await api.setHypothesisStatus(id, status) }
+    catch (e) { setErr(String(e)); api.hypotheses(pid).then(setHyps).catch(() => { }) }
+  }
+
   return (
     <div className="space-y-4 animate-in">
       <PageHeader title="Отчёт и экспорт"
@@ -50,17 +58,21 @@ export default function ExportScreen() {
       {err && <ErrorBox error={err} />}
 
       {hyps === null ? <Spinner /> :
-        tab === 'report' ? <ReportTab hyps={hyps} /> : <RoadmapTab pid={pid} hyps={hyps} />}
+        tab === 'report' ? <ReportTab hyps={hyps} onMove={moveHypothesis} /> : <RoadmapTab pid={pid} hyps={hyps} />}
     </div>
   )
 }
 
-function ReportTab({ hyps }: { hyps: Hypothesis[] }) {
+function ReportTab({ hyps, onMove }: {
+  hyps: Hypothesis[]; onMove: (id: string, status: string) => void
+}) {
   const cols: [string, string][] = [
     ['proposed', 'Предложены'], ['accepted', 'Приняты'],
     ['testing', 'На проверке'], ['confirmed', 'Подтверждены'], ['rejected', 'Отклонены'],
   ]
   const top = hyps.slice(0, 5)
+  const [overCol, setOverCol] = useState<string | null>(null)
+  const [dragId, setDragId] = useState<string | null>(null)
   return (
     <div className="space-y-4">
       <Panel title="Топ-5 гипотез (попадут на титул DOCX)" bodyClass="p-2 sm:p-3">
@@ -92,38 +104,58 @@ function ReportTab({ hyps }: { hyps: Hypothesis[] }) {
         </div>
       </Panel>
 
-      <div className="grid grid-cols-5 gap-3 stagger">
-        {cols.map(([status, label]) => {
-          const items = hyps.filter(h => h.status === status)
-          return (
-            <div key={status} className="card-2 p-2">
-              <div className="text-xs font-semibold text-muted mb-2 flex items-center justify-between">
-                <span className="truncate">{label}</span>
-                <span className="num">{items.length}</span>
-              </div>
-              <div className="space-y-2">
-                {items.map(h => {
-                  const cls = status === 'rejected'
-                    ? 'card p-2 text-xs leading-snug opacity-50'
-                    : status === 'accepted'
+      <div>
+        <SectionLabel>Статусы гипотез · перетащите карточку между колонками</SectionLabel>
+        <div className="grid grid-cols-5 gap-3 stagger">
+          {cols.map(([status, label]) => {
+            const items = hyps.filter(h => h.status === status)
+            const over = overCol === status
+            return (
+              <div key={status} className="card-2 p-2 transition-colors"
+                style={{ minHeight: 130, ...(over ? { borderColor: 'var(--c-brand)', background: 'var(--c-brand-tint)' } : null) }}
+                onDragOver={e => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; if (overCol !== status) setOverCol(status) }}
+                onDragLeave={e => { if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setOverCol(null) }}
+                onDrop={e => {
+                  e.preventDefault()
+                  const id = e.dataTransfer.getData('text/plain') || dragId || ''
+                  setOverCol(null); setDragId(null)
+                  const h = hyps.find(x => x.id === id)
+                  if (h && h.status !== status) onMove(h.id, status)
+                }}>
+                <div className="text-xs font-semibold text-muted mb-2 flex items-center justify-between">
+                  <span className="truncate">{label}</span>
+                  <span className="num">{items.length}</span>
+                </div>
+                <div className="space-y-2">
+                  {items.map(h => {
+                    const base = status === 'accepted'
                       ? 'card p-2 text-xs leading-snug bg-ok-tint'
                       : 'card p-2 text-xs leading-snug'
-                  const st: CSSProperties | undefined =
-                    status === 'accepted' ? { borderColor: 'var(--c-ok)' } : undefined
-                  return (
-                    <div key={h.id} className={cls} style={st}>
-                      <div className="font-medium">{h.title}</div>
-                      <div className="num text-muted mt-1">
-                        {fmt.t(h.effect.tonnes_expected, 0)} т · {fmt.rub(h.effect.money_usd)}
-                        <span className="text-faint"> · {fmt.usd(h.effect.money_usd)}</span>
+                    return (
+                      <div key={h.id} draggable
+                        onDragStart={e => { setDragId(h.id); e.dataTransfer.setData('text/plain', h.id); e.dataTransfer.effectAllowed = 'move' }}
+                        onDragEnd={() => { setDragId(null); setOverCol(null) }}
+                        className={base + ' cursor-grab active:cursor-grabbing select-none'}
+                        style={{
+                          opacity: dragId === h.id ? 0.4 : status === 'rejected' ? 0.55 : 1,
+                          borderColor: status === 'accepted' ? 'var(--c-ok)' : undefined,
+                        }}>
+                        <div className="font-medium">{h.title}</div>
+                        <div className="num text-muted mt-1">
+                          {fmt.t(h.effect.tonnes_expected, 0)} т · {fmt.rub(h.effect.money_usd)}
+                          <span className="text-faint"> · {fmt.usd(h.effect.money_usd)}</span>
+                        </div>
                       </div>
-                    </div>
-                  )
-                })}
+                    )
+                  })}
+                  {items.length === 0 && (
+                    <div className="text-[11px] text-faint text-center py-5 select-none">перетащите сюда</div>
+                  )}
+                </div>
               </div>
-            </div>
-          )
-        })}
+            )
+          })}
+        </div>
       </div>
     </div>
   )

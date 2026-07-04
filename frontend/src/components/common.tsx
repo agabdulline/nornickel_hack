@@ -49,7 +49,7 @@ export function Icon({ name, className = 'w-4 h-4', strokeWidth = 2 }:
 export function Logo({ compact = false }: { compact?: boolean }) {
   return (
     <span className="inline-flex items-center gap-2.5 select-none">
-      <img src="/logo.png" alt="Фабрика гипотез" className="h-8 w-auto shrink-0" />
+      <img src="/norm-logo.png" alt="Фабрика гипотез" className="h-8 w-auto shrink-0" />
       {!compact && (
         <span className="font-extrabold tracking-tight text-[15px] leading-none"
           style={{ color: 'var(--c-brand-strong)' }}>
@@ -216,8 +216,9 @@ export function Meter({ value, className = '', title }: { value: number; classNa
 export function Spinner({ label = 'Загрузка…' }: { label?: string }) {
   return (
     <div className="flex flex-col items-center justify-center py-16 gap-3" style={{ color: 'var(--c-faint)' }}>
-      <span className="inline-block w-6 h-6 rounded-full border-[2.5px] animate-spin"
-        style={{ borderColor: 'var(--c-line-strong)', borderTopColor: 'var(--c-brand)' }} />
+      <img src="/norm-logo.png" alt="" aria-hidden
+        className="w-12 h-12 object-contain animate-spin"
+        style={{ animationDuration: '1.1s' }} />
       <span className="text-sm">{label}</span>
     </div>
   )

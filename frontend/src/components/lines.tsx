@@ -1,9 +1,11 @@
 import { useEffect, useRef, useState } from 'react'
 import { api } from '../api'
 import type { Equipment, Line, LineKind, LineMaterial, Material, MaterialUnit } from '../types'
+import { Icon } from './common'
 
 const STANDARD_UNITS = ['т', 'кг', 'г', 'мг', 'м³', 'л', 'мл', '%', 'ppm', 'моль', 'ммоль', 'г/т']
 const CUSTOM_UNIT = '__custom__'
+const BRAND_ACCENT = { accentColor: 'var(--c-brand)' }
 
 /** Select со стандартными единицами + «своя единица…»: при выборе последней
  * (или когда текущее значение уже не входит в стандартный список) рядом
@@ -12,14 +14,14 @@ function UnitField({ value, onChange }: { value: MaterialUnit; onChange: (v: str
   const isCustom = !STANDARD_UNITS.includes(value)
   return (
     <>
-      <select className="w-24 border border-slate-300 rounded px-2 py-1 text-sm"
+      <select className="select w-24 py-1"
         value={isCustom ? CUSTOM_UNIT : value}
         onChange={e => onChange(e.target.value === CUSTOM_UNIT ? '' : e.target.value)}>
         {STANDARD_UNITS.map(u => <option key={u} value={u}>{u}</option>)}
         <option value={CUSTOM_UNIT}>своя единица…</option>
       </select>
       {isCustom && (
-        <input className="w-24 border border-slate-300 rounded px-2 py-1 text-sm placeholder:text-slate-400"
+        <input className="input w-24 py-1"
           placeholder="напр.: усл.ед." value={value} onChange={e => onChange(e.target.value)} autoFocus />
       )}
     </>
@@ -51,17 +53,23 @@ function useOutsideClose(open: boolean, onClose: () => void) {
 }
 
 function KindBadge({ kind }: { kind: LineKind }) {
-  return (
-    <span className={`badge ${kind === 'лаборатория' ? 'bg-amber-50 text-amber-800' : 'bg-slate-100 text-slate-700'}`}>
-      {kind}
-    </span>
-  )
+  return <span className={`badge ${kind === 'лаборатория' ? 'badge-warn' : ''}`}>{kind}</span>
 }
 
 /** Бейдж показывается только для внешних партнёров — свои институты не маркируются. */
 function OwnershipBadge({ ownership }: { ownership: Line['ownership'] }) {
   if (ownership !== 'внешний подрядчик/партнёр') return null
-  return <span className="badge bg-purple-50 text-purple-800">внешний партнёр</span>
+  return <span className="badge badge-brand">внешний партнёр</span>
+}
+
+/** Кнопка удаления строки/чипа. */
+function RemoveBtn({ onClick, className = '' }: { onClick: (e: React.MouseEvent) => void; className?: string }) {
+  return (
+    <button type="button" onClick={onClick} title="Удалить"
+      className={`shrink-0 opacity-60 hover:opacity-100 hover:text-danger transition-opacity ${className}`}>
+      <Icon name="x" className="w-3.5 h-3.5" />
+    </button>
+  )
 }
 
 /** Комбобокс «Фабрика/линия»: поиск по каталогу линий + инлайн-создание новой. */
@@ -108,20 +116,20 @@ export function LineCombobox({ value, onSelect, placeholder }: {
   return (
     <div className="relative" ref={ref}>
       <input
-        className="mt-1 w-full border border-slate-300 rounded px-2 py-1.5 text-sm placeholder:text-slate-400"
+        className="input mt-1.5"
         placeholder={placeholder ?? 'напр.: НОФ · вкрапленные руды'}
         value={search}
         onFocus={() => setOpen(true)}
         onChange={e => { setSearch(e.target.value); setOpen(true) }}
       />
       {open && (
-        <div className="absolute z-20 mt-1 w-full bg-white border border-slate-300 rounded shadow-lg
-            max-h-72 overflow-auto text-sm">
+        <div className="absolute z-20 mt-1 w-full bg-surface border border-line rounded-lg
+            shadow-pop max-h-72 overflow-auto text-sm">
           {filtered.map(l => (
             <button key={l.id} type="button"
-              className="w-full text-left px-2 py-1.5 hover:bg-teal-50 flex items-center justify-between gap-2"
+              className="w-full text-left px-3 py-2 hover:bg-brand-tint flex items-center justify-between gap-2 transition-colors"
               onClick={() => pick(l)}>
-              <span className={l.id === NO_OBJECT_ID ? 'text-slate-500 italic' : ''}>{l.name}</span>
+              <span className={l.id === NO_OBJECT_ID ? 'text-faint italic' : ''}>{l.name}</span>
               {l.id !== NO_OBJECT_ID && (
                 <span className="flex items-center gap-1">
                   <OwnershipBadge ownership={l.ownership} />
@@ -131,34 +139,35 @@ export function LineCombobox({ value, onSelect, placeholder }: {
             </button>
           ))}
           {filtered.length === 0 && (
-            <div className="px-2 py-1.5 text-slate-400">Ничего не найдено</div>
+            <div className="px-3 py-2 text-faint">Ничего не найдено</div>
           )}
-          <div className="border-t border-slate-100">
+          <div className="border-t border-line">
             {!showCreate ? (
-              <button type="button" className="w-full text-left px-2 py-1.5 text-teal-700 hover:bg-teal-50 font-medium"
+              <button type="button"
+                className="w-full text-left px-3 py-2 text-brand hover:bg-brand-tint font-semibold flex items-center gap-1.5 transition-colors"
                 onClick={() => setShowCreate(true)}>
-                + добавить новую фабрику/лабораторию
+                <Icon name="plus" className="w-3.5 h-3.5" /> добавить новую фабрику/лабораторию
               </button>
             ) : (
-              <div className="p-2 space-y-1.5">
-                <input className="w-full border border-slate-300 rounded px-2 py-1 placeholder:text-slate-400"
+              <div className="p-2.5 space-y-2">
+                <input className="input"
                   placeholder="напр.: НОФ · медистые руды"
                   value={newName} onChange={e => setNewName(e.target.value)}
                   onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); createLine() } }} />
-                <div className="flex gap-3">
-                  <label className="flex items-center gap-1">
-                    <input type="radio" checked={newKind === 'производственная линия'}
+                <div className="flex gap-3 text-sm">
+                  <label className="flex items-center gap-1.5">
+                    <input type="radio" style={BRAND_ACCENT} checked={newKind === 'производственная линия'}
                       onChange={() => setNewKind('производственная линия')} /> Производственная линия
                   </label>
-                  <label className="flex items-center gap-1">
-                    <input type="radio" checked={newKind === 'лаборатория'}
+                  <label className="flex items-center gap-1.5">
+                    <input type="radio" style={BRAND_ACCENT} checked={newKind === 'лаборатория'}
                       onChange={() => setNewKind('лаборатория')} /> Лаборатория / НИОКР
                   </label>
                 </div>
                 <div className="flex gap-1.5">
-                  <button type="button" className="btn btn-primary" disabled={busy || !newName.trim()}
+                  <button type="button" className="btn btn-primary btn-sm" disabled={busy || !newName.trim()}
                     onClick={createLine}>Создать</button>
-                  <button type="button" className="btn" onClick={() => setShowCreate(false)}>Отмена</button>
+                  <button type="button" className="btn btn-sm" onClick={() => setShowCreate(false)}>Отмена</button>
                 </div>
               </div>
             )}
@@ -213,9 +222,9 @@ export function EquipmentEditor({ lineId, value, onChange }: {
 
   return (
     <div>
-      <div className="text-xs text-slate-500 mb-1">Оборудование объекта</div>
+      <div className="field-label mb-1">Оборудование объекта</div>
       {value.length === 0 && (
-        <div className="text-sm text-slate-400 mb-1">
+        <div className="text-sm text-faint mb-1">
           Оборудование не указано — добавьте его ниже, чтобы гипотезы проверялись на соответствие.
         </div>
       )}
@@ -223,27 +232,26 @@ export function EquipmentEditor({ lineId, value, onChange }: {
         <div className="flex flex-wrap gap-1.5 mb-2">
           {value.map(e => (
             <span key={e.id}
-              className={`badge cursor-pointer ${editingId === e.id ? 'bg-teal-100 text-teal-800' : 'bg-slate-100 text-slate-700 hover:bg-slate-200'}`}
+              className={`badge cursor-pointer ${editingId === e.id ? 'badge-solid' : ''}`}
               onClick={() => startEdit(e)} title="Клик — редактировать">
               {e.name}{e.position && ` (${e.position})`}
-              <button type="button" className="ml-1 text-slate-400 hover:text-red-600"
-                onClick={ev => { ev.stopPropagation(); remove(e.id) }}>✕</button>
+              <RemoveBtn className="ml-0.5" onClick={ev => { ev.stopPropagation(); remove(e.id) }} />
             </span>
           ))}
         </div>
       )}
       <div className="flex gap-1.5">
-        <input className="flex-1 border border-slate-300 rounded px-2 py-1 text-sm placeholder:text-slate-400"
+        <input className="input flex-1 py-1"
           placeholder="напр.: Гидроциклон ГЦ-660"
           value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} />
-        <input className="w-24 border border-slate-300 rounded px-2 py-1 text-sm placeholder:text-slate-400"
+        <input className="input w-24 py-1"
           placeholder="напр.: 5-3" value={form.position} onChange={e => setForm({ ...form, position: e.target.value })} />
-        <input className="w-32 border border-slate-300 rounded px-2 py-1 text-sm placeholder:text-slate-400"
+        <input className="input w-32 py-1"
           placeholder="напр.: гидроциклон" value={form.category} onChange={e => setForm({ ...form, category: e.target.value })} />
-        <button type="button" className="btn" disabled={busy || !form.name.trim()} onClick={submit}>
+        <button type="button" className="btn btn-sm" disabled={busy || !form.name.trim()} onClick={submit}>
           {editingId ? 'Сохранить' : '+ Добавить'}
         </button>
-        {editingId && <button type="button" className="btn" onClick={cancelEdit}>Отмена</button>}
+        {editingId && <button type="button" className="btn btn-sm" onClick={cancelEdit}>Отмена</button>}
       </div>
     </div>
   )
@@ -261,16 +269,16 @@ function MaterialNameField({ value, onChange, catalog }: {
 
   return (
     <div className="relative flex-1" ref={ref}>
-      <input className="w-full border border-slate-300 rounded px-2 py-1 text-sm placeholder:text-slate-400"
+      <input className="input py-1"
         placeholder="напр.: вкрапленная руда"
         value={value}
         onFocus={() => setOpen(true)}
         onChange={e => { onChange(e.target.value); setOpen(true) }} />
       {open && suggestions.length > 0 && (
-        <div className="absolute z-20 mt-1 w-full bg-white border border-slate-300 rounded shadow-lg
-            max-h-48 overflow-auto text-sm">
+        <div className="absolute z-20 mt-1 w-full bg-surface border border-line rounded-lg
+            shadow-pop max-h-48 overflow-auto text-sm">
           {suggestions.map(s => (
-            <button key={s.id} type="button" className="w-full text-left px-2 py-1 hover:bg-teal-50"
+            <button key={s.id} type="button" className="w-full text-left px-3 py-1.5 hover:bg-brand-tint transition-colors"
               onClick={() => { onChange(s.name); setOpen(false) }}>
               {s.name}
             </button>
@@ -332,34 +340,33 @@ export function MaterialsEditor({ lineId, value, onChange }: {
 
   return (
     <div>
-      <div className="text-xs text-slate-500 mb-1">Сырьё</div>
+      <div className="field-label mb-1">Сырьё</div>
       {value.length === 0 && (
-        <div className="text-sm text-slate-400 mb-1">Сырьё для этого объекта ещё не заведено.</div>
+        <div className="text-sm text-faint mb-1">Сырьё для этого объекта ещё не заведено.</div>
       )}
       {value.length > 0 && (
         <div className="flex flex-wrap gap-1.5 mb-2">
           {value.map(m => (
             <span key={m.id}
-              className={`badge cursor-pointer ${editingId === m.id ? 'bg-teal-100 text-teal-800' : 'bg-teal-50 text-teal-800 hover:bg-teal-100'}`}
+              className={`badge cursor-pointer ${editingId === m.id ? 'badge-solid' : 'badge-brand'}`}
               onClick={() => startEdit(m)} title="Клик — редактировать">
-              {m.name} — {m.quantity.toLocaleString('ru-RU')} {m.unit}
-              <button type="button" className="ml-1 text-teal-500 hover:text-red-600"
-                onClick={ev => { ev.stopPropagation(); remove(m.id) }}>✕</button>
+              <span className="num">{m.name} — {m.quantity.toLocaleString('ru-RU')} {m.unit}</span>
+              <RemoveBtn className="ml-0.5" onClick={ev => { ev.stopPropagation(); remove(m.id) }} />
             </span>
           ))}
         </div>
       )}
       <div className="flex gap-1.5">
         <MaterialNameField value={form.name} onChange={v => setForm({ ...form, name: v })} catalog={catalog} />
-        <input type="number" min={0} className="w-24 border border-slate-300 rounded px-2 py-1 text-sm placeholder:text-slate-400"
+        <input type="number" min={0} className="input w-24 py-1 num"
           placeholder="напр.: 1200" value={form.quantity}
           onChange={e => setForm({ ...form, quantity: e.target.value })} />
         <UnitField value={form.unit} onChange={unit => setForm({ ...form, unit })} />
-        <button type="button" className="btn" disabled={busy || !form.name.trim() || form.quantity === ''}
+        <button type="button" className="btn btn-sm" disabled={busy || !form.name.trim() || form.quantity === ''}
           onClick={submit}>
           {editingId ? 'Сохранить' : '+ Добавить'}
         </button>
-        {editingId && <button type="button" className="btn" onClick={cancelEdit}>Отмена</button>}
+        {editingId && <button type="button" className="btn btn-sm" onClick={cancelEdit}>Отмена</button>}
       </div>
     </div>
   )
@@ -396,40 +403,39 @@ export function EquipmentRows({ rows, onChange }: {
 
   return (
     <div>
-      <div className="text-xs text-slate-500 mb-1">Оборудование объекта</div>
+      <div className="field-label mb-1">Оборудование объекта</div>
       {rows.length === 0 && (
-        <div className="text-sm text-slate-400 mb-1">
+        <div className="text-sm text-faint mb-1">
           Оборудование не указано — добавьте его ниже, чтобы гипотезы проверялись на соответствие.
         </div>
       )}
       <div className="space-y-1.5">
         {rows.map(r => (
-          <div key={r.id} className="flex gap-1.5">
-            <input className="flex-1 border border-slate-300 rounded px-2 py-1 text-sm placeholder:text-slate-400"
+          <div key={r.id} className="flex gap-1.5 items-center">
+            <input className="input flex-1 py-1"
               placeholder="напр.: Гидроциклон ГЦ-660"
               value={r.name} onChange={e => updateRow(r.id, { name: e.target.value })} />
-            <input className="w-24 border border-slate-300 rounded px-2 py-1 text-sm placeholder:text-slate-400"
+            <input className="input w-24 py-1"
               placeholder="напр.: 5-3"
               value={r.position} onChange={e => updateRow(r.id, { position: e.target.value })} />
-            <input className="w-32 border border-slate-300 rounded px-2 py-1 text-sm placeholder:text-slate-400"
+            <input className="input w-32 py-1"
               placeholder="напр.: гидроциклон"
               value={r.category} onChange={e => updateRow(r.id, { category: e.target.value })} />
-            <button type="button" className="text-slate-400 hover:text-red-600 px-1"
-              onClick={() => removeRow(r.id)}>✕</button>
+            <RemoveBtn className="px-1" onClick={() => removeRow(r.id)} />
           </div>
         ))}
       </div>
-      <div className="flex gap-1.5 mt-1.5">
-        <input className="flex-1 border border-slate-300 rounded px-2 py-1 text-sm placeholder:text-slate-400"
+      <div className="flex gap-1.5 mt-1.5 items-center">
+        <input className="input flex-1 py-1"
           placeholder="напр.: Гидроциклон ГЦ-660"
           value={addForm.name} onChange={e => setAddForm({ ...addForm, name: e.target.value })} />
-        <input className="w-24 border border-slate-300 rounded px-2 py-1 text-sm placeholder:text-slate-400"
+        <input className="input w-24 py-1"
           placeholder="напр.: 5-3"
           value={addForm.position} onChange={e => setAddForm({ ...addForm, position: e.target.value })} />
-        <input className="w-32 border border-slate-300 rounded px-2 py-1 text-sm placeholder:text-slate-400"
+        <input className="input w-32 py-1"
           placeholder="напр.: гидроциклон"
           value={addForm.category} onChange={e => setAddForm({ ...addForm, category: e.target.value })} />
-        <button type="button" className="btn" disabled={!addForm.name.trim()} onClick={addRow}>+ Добавить</button>
+        <button type="button" className="btn btn-sm" disabled={!addForm.name.trim()} onClick={addRow}>+ Добавить</button>
       </div>
     </div>
   )
@@ -452,30 +458,29 @@ export function MaterialRows({ rows, onChange, catalog }: {
 
   return (
     <div>
-      <div className="text-xs text-slate-500 mb-1">Сырьё</div>
+      <div className="field-label mb-1">Сырьё</div>
       {rows.length === 0 && (
-        <div className="text-sm text-slate-400 mb-1">Сырьё для этого объекта ещё не заведено.</div>
+        <div className="text-sm text-faint mb-1">Сырьё для этого объекта ещё не заведено.</div>
       )}
       <div className="space-y-1.5">
         {rows.map(r => (
-          <div key={r.id} className="flex gap-1.5">
+          <div key={r.id} className="flex gap-1.5 items-center">
             <MaterialNameField value={r.name} onChange={v => updateRow(r.id, { name: v })} catalog={catalog} />
-            <input type="number" min={0} className="w-24 border border-slate-300 rounded px-2 py-1 text-sm placeholder:text-slate-400"
+            <input type="number" min={0} className="input w-24 py-1 num"
               placeholder="напр.: 1200"
               value={r.quantity} onChange={e => updateRow(r.id, { quantity: e.target.value })} />
             <UnitField value={r.unit} onChange={unit => updateRow(r.id, { unit })} />
-            <button type="button" className="text-slate-400 hover:text-red-600 px-1"
-              onClick={() => removeRow(r.id)}>✕</button>
+            <RemoveBtn className="px-1" onClick={() => removeRow(r.id)} />
           </div>
         ))}
       </div>
-      <div className="flex gap-1.5 mt-1.5">
+      <div className="flex gap-1.5 mt-1.5 items-center">
         <MaterialNameField value={addForm.name} onChange={v => setAddForm({ ...addForm, name: v })} catalog={catalog} />
-        <input type="number" min={0} className="w-24 border border-slate-300 rounded px-2 py-1 text-sm placeholder:text-slate-400"
+        <input type="number" min={0} className="input w-24 py-1 num"
           placeholder="напр.: 1200"
           value={addForm.quantity} onChange={e => setAddForm({ ...addForm, quantity: e.target.value })} />
         <UnitField value={addForm.unit} onChange={unit => setAddForm({ ...addForm, unit })} />
-        <button type="button" className="btn" disabled={!addForm.name.trim() || addForm.quantity === ''}
+        <button type="button" className="btn btn-sm" disabled={!addForm.name.trim() || addForm.quantity === ''}
           onClick={addRow}>+ Добавить</button>
       </div>
     </div>

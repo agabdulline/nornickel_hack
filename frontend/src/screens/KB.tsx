@@ -422,6 +422,9 @@ export default function KB() {
   const [chunk, setChunk] = useState<string | null>(null)
   const [preview, setPreview] = useState<KbDoc | null>(null)
   const [langTab, setLangTab] = useState<LangTab>('all')
+  const [docQuery, setDocQuery] = useState('')
+  // темы свёрнуты по умолчанию — раскрываются кликом («подробнее»)
+  const [openTopics, setOpenTopics] = useState<Set<string>>(new Set())
   const fileRef = useRef<HTMLInputElement>(null)
 
   const load = () => api.kbDocs().then(setDocs).catch(e => setErr(String(e)))
@@ -473,9 +476,20 @@ export default function KB() {
     catch (e) { setErr(String(e)) } finally { setAsking(false) }
   }
 
-  const tabDocs = docs.filter(d => langTab === 'all' || langOf(d) === langTab)
+  const q = docQuery.trim().toLowerCase()
+  const matchesQuery = (d: KbDoc) =>
+    !q || d.source.toLowerCase().includes(q) || topicOf(d).toLowerCase().includes(q)
+  const tabDocs = docs.filter(d => (langTab === 'all' || langOf(d) === langTab) && matchesQuery(d))
   const tabCount = (t: LangTab) =>
     t === 'all' ? docs.length : docs.filter(d => langOf(d) === t).length
+
+  const toggleTopicOpen = (topic: string) =>
+    setOpenTopics(prev => {
+      const next = new Set(prev)
+      if (next.has(topic)) next.delete(topic)
+      else next.add(topic)
+      return next
+    })
 
   return (
     <div className="space-y-4">
@@ -524,6 +538,9 @@ export default function KB() {
         bodyClass="p-0"
         actions={
           <>
+            <input className="input h-8 w-52 text-sm"
+              placeholder="Поиск по книгам и темам…"
+              value={docQuery} onChange={e => setDocQuery(e.target.value)} />
             <Segmented
               options={(['all', ...LANGS] as LangTab[]).map(t => ({
                 value: t,
@@ -558,12 +575,21 @@ export default function KB() {
               const group = tabDocs.filter(d => topicOf(d) === topic)
               if (group.length === 0) return null
               const active = group.filter(d => d.enabled !== false).length
+              // при активном поиске секции раскрыты, чтобы совпадения были видны
+              const opened = q !== '' || openTopics.has(topic)
               return (
                 <tbody key={topic} className="stagger">
                   <tr className="bg-surface-2/60">
                     <td colSpan={7} className="py-1.5">
                       <span className="inline-flex items-center gap-3">
-                        <span className="text-xs font-semibold uppercase tracking-wide text-muted">{topic}</span>
+                        <button type="button"
+                          className="inline-flex items-center gap-1.5 cursor-pointer group"
+                          title={opened ? 'Свернуть тему' : 'Показать книги темы'}
+                          onClick={() => toggleTopicOpen(topic)}>
+                          <Icon name="arrowRight" strokeWidth={2.5}
+                            className={`w-3.5 h-3.5 text-faint transition-transform duration-200 ${opened ? 'rotate-90' : ''}`} />
+                          <span className="text-xs font-semibold uppercase tracking-wide text-muted group-hover:text-brand">{topic}</span>
+                        </button>
                         <span className="num text-xs text-faint">{active}/{group.length} в поиске</span>
                         <button type="button"
                           className="text-xs text-brand hover:underline underline-offset-2 cursor-pointer"
@@ -571,10 +597,17 @@ export default function KB() {
                           onClick={() => toggleTopic(group)}>
                           {active > 0 ? 'выключить тему' : 'включить тему'}
                         </button>
+                        {!opened && (
+                          <button type="button"
+                            className="text-xs text-faint hover:text-brand cursor-pointer"
+                            onClick={() => toggleTopicOpen(topic)}>
+                            подробнее…
+                          </button>
+                        )}
                       </span>
                     </td>
                   </tr>
-                  {group.map(d => {
+                  {opened && group.map(d => {
                     const on = d.enabled !== false
                     return (
                       <tr key={d.doc_id} className={on ? '' : 'opacity-55'}>

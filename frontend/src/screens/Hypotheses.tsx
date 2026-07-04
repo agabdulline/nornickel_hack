@@ -65,12 +65,12 @@ export default function Hypotheses() {
   }
 
   return (
-    <div className="space-y-4 animate-in">
+    <div className="flex flex-col animate-in" style={{ height: 'calc(100vh - 85px)' }}>
       <PageHeader title="Гипотезы" subtitle="Ранжирование по вашим весам" />
 
-      <div className="flex gap-4 items-start">
-        {/* левая панель */}
-        <aside className="w-64 shrink-0 space-y-4 sticky top-16">
+      <div className="flex gap-4 flex-1 min-h-0 mt-4">
+        {/* левая панель — статична, скроллится только при нехватке высоты */}
+        <aside className="w-64 shrink-0 space-y-4 overflow-y-auto h-full pr-1 pb-2">
           <Panel title="Веса ранжирования" bodyClass="p-4 space-y-3.5">
             {Object.entries(weights).map(([k, v]) => (
               <label key={k} className="block">
@@ -119,8 +119,8 @@ export default function Hypotheses() {
           </button>
         </aside>
 
-        {/* карточки */}
-        <div className="flex-1 space-y-3 min-w-0">
+        {/* карточки — прокручиваются внутри своей области */}
+        <div className="flex-1 min-w-0 space-y-3 overflow-y-auto h-full pr-1 pb-2">
           {err && <ErrorBox error={err} />}
           {hyps === null && !err && <Spinner />}
           {hyps !== null && visible.length === 0 &&

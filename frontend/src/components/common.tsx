@@ -1,4 +1,5 @@
 import { useEffect, useState, type ReactNode } from 'react'
+import { createPortal } from 'react-dom'
 import { NavLink } from 'react-router-dom'
 import { api } from '../api'
 import { useTheme } from '../theme'
@@ -274,7 +275,9 @@ export function Modal({ title, onClose, children, wide = false }: {
     window.addEventListener('keydown', h)
     return () => window.removeEventListener('keydown', h)
   }, [onClose])
-  return (
+  // Портал в body: иначе position:fixed считается от предка с transform
+  // (.animate-in/.animate-fade) — модалка «уезжает» вниз по длинной странице.
+  return createPortal(
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 animate-fade"
       style={{ background: 'rgba(10,14,22,.5)', backdropFilter: 'blur(2px)' }} onClick={onClose}>
       <div className={`card animate-in w-full ${wide ? 'max-w-4xl' : 'max-w-2xl'} max-h-[82vh] flex flex-col`}
@@ -285,7 +288,8 @@ export function Modal({ title, onClose, children, wide = false }: {
         </header>
         <div className="overflow-auto p-4">{children}</div>
       </div>
-    </div>
+    </div>,
+    document.body,
   )
 }
 

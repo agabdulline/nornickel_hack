@@ -19,23 +19,32 @@ const TYPE_LABEL: Record<string, string> = {
   flotation: 'Флотация', thickening: 'Сгущение', magnetic: 'Магнитная', gravity: 'Гравитация',
 }
 
-/** Исходные изображения схем/регламента, из которых оцифрован флоушит. */
+/** Исходные изображения схем/регламента, из которых оцифрован флоушит.
+ * Несколько файлов — вкладками сверху, ниже рисуется только выбранный. */
 function FlowsheetSources({ factory, files, onClose }: {
   factory: string; files: string[]; onClose: () => void
 }) {
+  const [active, setActive] = useState(0)
+  const i = Math.min(active, files.length - 1)
   return (
     <Modal wide onClose={onClose}
       title={`Исходные схемы: ${factory} (оцифровано с ${files.length} изображений)`}>
-      <div className="space-y-5">
-        {files.map((name, i) => (
-          <figure key={name}>
-            <figcaption className="text-xs text-muted mb-1.5">{name}</figcaption>
-            <img src={`/api/flowsheet-image/${encodeURIComponent(factory)}/${i}`}
-              alt={name} loading="lazy"
-              className="max-w-full rounded-md border border-line bg-white" />
-          </figure>
-        ))}
-      </div>
+      {files.length > 1 && (
+        <div className="flex flex-wrap gap-1.5 mb-3 pb-3 border-b border-line">
+          {files.map((name, n) => (
+            <button key={name} type="button" onClick={() => setActive(n)}
+              className={`chip ${n === i ? 'chip-active' : ''}`}>{name}</button>
+          ))}
+        </div>
+      )}
+      <figure>
+        {files.length <= 1 && (
+          <figcaption className="text-xs text-muted mb-1.5">{files[i]}</figcaption>
+        )}
+        <img src={`/api/flowsheet-image/${encodeURIComponent(factory)}/${i}`}
+          alt={files[i]} loading="lazy"
+          className="max-w-full rounded-md border border-line bg-white" />
+      </figure>
     </Modal>
   )
 }
@@ -68,20 +77,18 @@ function FlowsheetGraph({ factory, fs, highlight }: {
       subtitle="по оцифрованному регламенту; подсвечены переделы сработавших диагнозов"
       bodyClass={collapsed ? 'p-0' : 'p-3'}
       actions={
-        <div className="flex items-center gap-1.5">
+        <div className="flex items-center gap-1.5 shrink-0">
           {sources.length > 0 && factory && (
-            <button className="btn btn-sm" title="Показать изображения, с которых оцифрована схема"
+            <button className="btn btn-sm !px-2" title={`Исходные схемы (${sources.length}) — изображения, с которых оцифрована схема`}
               onClick={() => setShowSources(true)}>
               <Icon name="search" className="w-4 h-4" />
-              <span className="hidden sm:inline">Исходные схемы </span>
-              <span className="num">({sources.length})</span>
+              <span className="num">{sources.length}</span>
             </button>
           )}
-          <button className="btn btn-sm" onClick={() => setCollapsed(v => !v)}
+          <button className="btn btn-sm !px-2" onClick={() => setCollapsed(v => !v)}
             aria-expanded={!collapsed} title={collapsed ? 'Развернуть схему' : 'Свернуть схему'}>
             <Icon name="arrowRight"
               className={`w-4 h-4 transition-transform duration-200 ${collapsed ? '' : 'rotate-90'}`} />
-            {collapsed ? 'Развернуть' : 'Свернуть'}
           </button>
         </div>
       }>
@@ -259,6 +266,7 @@ export default function LossMap() {
   const notProposed = diag.not_proposed.filter(x => x.element === el)
   const r5 = diag.issues.filter(i => i.rule?.startsWith('R5') && i.severity !== 'info')
   const hasAside = r5.length > 0 || notProposed.length > 0
+  const hasFlowsheet = !!fsInfo?.flowsheet
 
   return (
     <div className="space-y-4 animate-in">
@@ -276,12 +284,7 @@ export default function LossMap() {
           </button>
         </>} />
 
-      {fsInfo?.flowsheet && (
-        <FlowsheetGraph factory={fsInfo.factory} fs={fsInfo.flowsheet}
-          highlight={new Set(diag.diagnoses.flatMap(d => d.node_refs ?? []))} />
-      )}
-
-      {/* тепловая карта — на всю ширину */}
+      {/* тепловая карта — на всю ширину, сверху */}
       <Panel
         title={<span className="flex items-center gap-2">
           <Badge tone={el === 'Ni' ? 'brand' : 'warn'}>{el}</Badge>
@@ -296,16 +299,17 @@ export default function LossMap() {
         <HeatTable el={el} diag={diag} />
       </Panel>
 
-      {/* диагнозы и «почему не предложено» — в одной строке, верхи выровнены */}
-      <div className={hasAside ? 'grid gap-4 lg:grid-cols-2 items-start' : ''}>
+      {/* низ: слева диагнозы + «почему не предложено», справа — узкая высокая схема фабрики */}
+      <div className={hasFlowsheet ? 'grid gap-4 xl:grid-cols-[minmax(0,1fr)_380px] items-start' : ''}>
+        {/* левая колонка: диагнозы, затем «почему не предложено» */}
+        <div className="space-y-4 min-w-0">
         {/* диагнозы */}
         <section className="flex flex-col gap-2 min-w-0">
           <SectionLabel>Диагнозы {el} · {diagnoses.length}</SectionLabel>
           {diagnoses.length === 0
             ? <EmptyBox text={`Для ${el} правила диагностики не сработали`} icon="target" />
             : (
-              <div className={'grid gap-3 auto-rows-fr ' +
-                (hasAside ? 'lg:grid-cols-1' : 'md:grid-cols-2 xl:grid-cols-3')}>
+              <div className={`grid gap-3 auto-rows-fr ${diagnoses.length > 1 ? 'sm:grid-cols-2' : ''}`}>
                 {diagnoses.map(d => {
                   const key = d.rule_id + d.element
                   return (
@@ -372,6 +376,15 @@ export default function LossMap() {
               )}
             </div>
           </section>
+        )}
+        </div>{/* /левая колонка */}
+
+        {/* правая колонка: схема фабрики — узкая, занимает высоту */}
+        {fsInfo?.flowsheet && (
+          <div className="min-w-0">
+            <FlowsheetGraph factory={fsInfo.factory} fs={fsInfo.flowsheet}
+              highlight={new Set(diag.diagnoses.flatMap(d => d.node_refs ?? []))} />
+          </div>
         )}
       </div>
     </div>

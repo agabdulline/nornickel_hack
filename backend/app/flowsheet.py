@@ -116,6 +116,8 @@ def summarize_for_prompt(factory: str | None) -> dict | None:
             if s.get(k) is not None:
                 t[k] = s[k]
         tails.append(t)
+    if not nodes:   # схема-заглушка: только исходные изображения (как у КГМК)
+        return None
     return {"фабрика": factory, "узлы": nodes, "хвостовые_потоки": tails}
 
 

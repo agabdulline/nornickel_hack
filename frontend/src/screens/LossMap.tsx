@@ -21,14 +21,14 @@ const TYPE_LABEL: Record<string, string> = {
 
 /** Исходные изображения схем/регламента, из которых оцифрован флоушит.
  * Несколько файлов — вкладками сверху, ниже рисуется только выбранный. */
-function FlowsheetSources({ factory, files, onClose }: {
-  factory: string; files: string[]; onClose: () => void
+function FlowsheetSources({ factory, files, onClose, initial = 0 }: {
+  factory: string; files: string[]; onClose: () => void; initial?: number
 }) {
-  const [active, setActive] = useState(0)
+  const [active, setActive] = useState(initial)
   const i = Math.min(active, files.length - 1)
   return (
     <Modal wide onClose={onClose}
-      title={`Исходные схемы: ${factory} (оцифровано с ${files.length} изображений)`}>
+      title={`Исходные схемы: ${factory} (${files.length} изобр.)`}>
       {files.length > 1 && (
         <div className="flex flex-wrap gap-1.5 mb-3 pb-3 border-b border-line">
           {files.map((name, n) => (
@@ -53,8 +53,9 @@ function FlowsheetSources({ factory, files, onClose }: {
 function FlowsheetGraph({ factory, fs, highlight }: {
   factory: string | null; fs: FlowsheetData; highlight: Set<string>
 }) {
-  const [showSources, setShowSources] = useState(false)
+  const [showSources, setShowSources] = useState<number | null>(null)
   const [collapsed, setCollapsed] = useState(false)
+  const digitized = fs.nodes.length > 0
   const groups = TYPE_ORDER
     .map(t => ({ type: t, nodes: fs.nodes.filter(n => n.type === t) }))
     .filter(g => g.nodes.length > 0)
@@ -74,13 +75,15 @@ function FlowsheetGraph({ factory, fs, highlight }: {
   return (
     <Panel
       title={`Схема фабрики: ${factory}`}
-      subtitle="по оцифрованному регламенту; подсвечены переделы сработавших диагнозов"
+      subtitle={digitized
+        ? 'по оцифрованному регламенту; подсвечены переделы сработавших диагнозов'
+        : 'исходные схемы из материалов кейса (граф переделов не оцифрован)'}
       bodyClass={collapsed ? 'p-0' : 'p-3'}
       actions={
         <div className="flex items-center gap-1.5 shrink-0">
-          {sources.length > 0 && factory && (
+          {digitized && sources.length > 0 && factory && (
             <button className="btn btn-sm !px-2" title={`Исходные схемы (${sources.length}) — изображения, с которых оцифрована схема`}
-              onClick={() => setShowSources(true)}>
+              onClick={() => setShowSources(0)}>
               <Icon name="search" className="w-4 h-4" />
               <span className="num">{sources.length}</span>
             </button>
@@ -92,7 +95,22 @@ function FlowsheetGraph({ factory, fs, highlight }: {
           </button>
         </div>
       }>
-      {!collapsed && (
+      {!collapsed && !digitized && factory && (
+        <div className="flex flex-wrap gap-4 animate-in">
+          {sources.map((name, i) => (
+            <figure key={name} className="cursor-pointer group" onClick={() => setShowSources(i)}
+              title="Открыть в полном размере">
+              <img src={`/api/flowsheet-image/${encodeURIComponent(factory)}/${i}`} alt={name}
+                loading="lazy"
+                className="h-44 max-w-full rounded-md border border-line bg-white object-contain
+                  transition-colors group-hover:border-brand" />
+              <figcaption className="text-[11px] mt-1 text-center"
+                style={{ color: 'var(--c-faint)' }}>{name}</figcaption>
+            </figure>
+          ))}
+        </div>
+      )}
+      {!collapsed && digitized && (
         <div className="flex flex-col items-center gap-1.5 animate-in">
           {groups.map((g, gi) => (
             <div key={g.type} className="flex flex-col items-center gap-1.5 w-full">
@@ -126,9 +144,9 @@ function FlowsheetGraph({ factory, fs, highlight }: {
           ))}
         </div>
       )}
-      {showSources && factory && (
-        <FlowsheetSources factory={factory} files={sources}
-          onClose={() => setShowSources(false)} />
+      {showSources !== null && factory && (
+        <FlowsheetSources factory={factory} files={sources} initial={showSources}
+          onClose={() => setShowSources(null)} />
       )}
     </Panel>
   )

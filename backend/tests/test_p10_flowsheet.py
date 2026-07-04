@@ -15,6 +15,9 @@ def test_flowsheets_yaml_loads():
     fs = pack().get("flowsheets")
     assert fs and "НОФ" in fs and "ТОФ" in fs
     for factory, sheet in fs.items():
+        if not sheet["nodes"]:   # заглушка (как КГМК): только исходные изображения
+            assert sheet["source_files"], f"{factory}: заглушка без изображений"
+            continue
         ids = [n["id"] for n in sheet["nodes"]]
         assert len(ids) == len(set(ids)), f"{factory}: дубликаты id узлов"
         for s in sheet["streams"]:
@@ -111,3 +114,15 @@ def test_zero_reagent_hints_with_kb():
             return []
     assert zero_reagent_hints("ТОФ", kb_index=EmptyKB()) == []
     assert zero_reagent_hints("КГМК", kb_index=FakeKB()) == []
+
+def test_kgmk_stub_flowsheet_images_only():
+    """КГМК: граф не оцифрован — заглушка с исходными изображениями.
+    UI показывает картинки, пайплайн деградирует мягко (без узлов/промпта)."""
+    fs = get_flowsheet("КГМК")
+    assert fs is not None
+    assert fs["source_files"] == ["Схема 1.png", "Схема 2.png"]
+    assert fs["nodes"] == [] and fs["streams"] == []
+    assert summarize_for_prompt("КГМК") is None          # в промпт не попадает
+    assert nodes_for_rule("R1", fs) == []                # диагнозы без node_refs
+    from backend.app.flowsheet import factories_available
+    assert "КГМК" in factories_available()

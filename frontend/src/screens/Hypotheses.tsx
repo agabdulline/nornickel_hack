@@ -249,7 +249,7 @@ function ScoreBreakdown({ h, weights, lo, hi }: {
   const rows = [
     { k: 'money', val: moneyN,
       note: `${fmt.rub(h.effect.money_usd)}/год (${fmt.usd(h.effect.money_usd)}) — `
-        + `${Math.round(moneyN * 100)}% от максимума в списке` },
+        + `${Math.round(moneyN * 100)}% в разбросе эффектов списка (min–max)` },
     { k: 'capex', val: 1 - capexNorm(h),
       note: { 0: 'внедрение от 100 млн ₽ — дорогое', 0.5: 'внедрение 10–100 млн ₽ — средней стоимости',
         1: 'внедрение до 10 млн ₽ — дешёвое' }[1 - capexNorm(h)] ?? '' },

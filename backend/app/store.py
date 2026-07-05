@@ -240,25 +240,35 @@ class Store:
                 self._conn.execute(f"UPDATE {t} SET {col}=? WHERE {col}=?", (nof, med))
             self._conn.execute("DELETE FROM lines WHERE id=?", (med,))
         # 2. ОФ «Заполярная» = тоже Кольская ГМК (линия КГМК уже есть) — убираем
-        #    дублирующую демо-линию и её ПУСТОЙ тест-проект. Проект с отчётом не
-        #    трогаем (вдруг им реально пользуются), и линию не удаляем, пока на
-        #    неё ссылается хоть один проект.
-        for r in self._conn.execute(
-                "SELECT id FROM projects WHERE plant LIKE '%Заполярн%'").fetchall():
-            if self._conn.execute("SELECT 1 FROM reports WHERE project_id=?",
-                                   (r["id"],)).fetchone():
+        #    ДЕМО-дубль. ТОЧНОЕ совпадение plant с известными демо-строками (не
+        #    LIKE по всем проектам — иначе снесём чужой проект с таким именем!) и
+        #    только если проект ПУСТОЙ: нет ни отчёта, ни гипотез, ни дорожной
+        #    карты. Реальные наработки не трогаем. Линию удаляем, лишь пока на неё
+        #    больше не ссылается ни один проект.
+        zap = ("ОФ «Заполярная» · пилот", "ОФ «Заполярная»")
+        for pid in [r["id"] for r in self._conn.execute(
+                "SELECT id FROM projects WHERE plant IN (?, ?)", zap).fetchall()]:
+            has_work = self._conn.execute(
+                "SELECT 1 FROM reports WHERE project_id=:p "
+                "UNION ALL SELECT 1 FROM hypotheses WHERE project_id=:p "
+                "UNION ALL SELECT 1 FROM roadmaps WHERE project_id=:p LIMIT 1",
+                {"p": pid}).fetchone()
+            if has_work:
                 continue
-            for t in ("hypotheses", "feedback", "roadmaps", "chat_messages", "chats"):
-                self._conn.execute(f"DELETE FROM {t} WHERE project_id=?", (r["id"],))
-            self._conn.execute("DELETE FROM projects WHERE id=?", (r["id"],))
-        for r in self._conn.execute(
-                "SELECT id FROM lines WHERE id LIKE '%Заполярн%'").fetchall():
-            if self._conn.execute("SELECT 1 FROM projects WHERE plant=?", (r["id"],)).fetchone():
+            for t in ("reports", "hypotheses", "feedback", "roadmaps",
+                      "chat_messages", "chats", "project_files"):
+                try:
+                    self._conn.execute(f"DELETE FROM {t} WHERE project_id=?", (pid,))
+                except sqlite3.OperationalError:
+                    pass  # таблицы (напр. project_files) может не быть на старой БД
+            self._conn.execute("DELETE FROM projects WHERE id=?", (pid,))
+        for lid in zap:
+            if self._conn.execute("SELECT 1 FROM projects WHERE plant=?", (lid,)).fetchone():
                 continue
             for t, col in (("line_stoplist", "line_id"), ("equipment", "line_id"),
                            ("line_materials", "line_id")):
-                self._conn.execute(f"DELETE FROM {t} WHERE {col}=?", (r["id"],))
-            self._conn.execute("DELETE FROM lines WHERE id=?", (r["id"],))
+                self._conn.execute(f"DELETE FROM {t} WHERE {col}=?", (lid,))
+            self._conn.execute("DELETE FROM lines WHERE id=?", (lid,))
         # 3. корректные имена (id стабилен; трогаем, только если имя ещё сырое)
         for line_id, new_name, old_name in [
             ("НОФ · вкрапленные руды", "НОФ", "НОФ · вкрапленные руды"),
@@ -613,23 +623,27 @@ class Store:
                       hypothesis_id: str | None = None) -> StopEntry:
         """Записывает отклонённое направление в стоп-лист линии.
 
-        Идемпотентно по (line_id, hypothesis_id): повторное отклонение той же
-        гипотезы обновляет причину, а не плодит дубли. Для ручных записей без
-        гипотезы дедуп по направлению (без учёта регистра)."""
+        Дедуп прежде всего по НАПРАВЛЕНИЮ (заголовку) в пределах линии, а не по
+        hypothesis_id: id гипотезы эфемерен (пересоздаётся при каждой регенерации,
+        save_hypotheses replace=True), поэтому дедуп только по id плодил бы дубли
+        одного и того же направления. Повторное отклонение того же направления
+        обновляет причину и id, а не создаёт вторую запись."""
         with self._lock:
             existing = None
-            if hypothesis_id:
-                existing = self._conn.execute(
-                    "SELECT id FROM line_stoplist WHERE line_id=? AND hypothesis_id=?",
-                    (line_id, hypothesis_id)).fetchone()
-            elif direction.strip():
+            if direction.strip():
                 existing = self._conn.execute(
                     "SELECT id FROM line_stoplist WHERE line_id=? AND lower(direction)=lower(?)",
                     (line_id, direction.strip())).fetchone()
+            elif hypothesis_id:
+                existing = self._conn.execute(
+                    "SELECT id FROM line_stoplist WHERE line_id=? AND hypothesis_id=?",
+                    (line_id, hypothesis_id)).fetchone()
             if existing:
                 self._conn.execute(
-                    "UPDATE line_stoplist SET direction=?, reason=?, project_id=?, created_at=? WHERE id=?",
-                    (direction.strip(), reason.strip(), project_id, _now(), existing["id"]))
+                    "UPDATE line_stoplist SET direction=?, reason=?, project_id=?, "
+                    "hypothesis_id=?, created_at=? WHERE id=?",
+                    (direction.strip(), reason.strip(), project_id, hypothesis_id,
+                     _now(), existing["id"]))
                 self._conn.commit()
                 row = self._conn.execute("SELECT * FROM line_stoplist WHERE id=?",
                                          (existing["id"],)).fetchone()
@@ -644,12 +658,26 @@ class Store:
             self._conn.commit()
         return entry
 
-    def remove_line_stop_for_hypothesis(self, hypothesis_id: str) -> int:
-        """Снимает гипотезу со стоп-листа (по всем линиям) — вызывается при
-        «всё-таки принять», чтобы принятое направление снова могло предлагаться."""
+    def remove_line_stop(self, line_id: str, hypothesis_id: str | None = None,
+                         direction: str | None = None) -> int:
+        """Снимает направление со стоп-листа линии при «всё-таки принять».
+        Матчит и по hypothesis_id, и по заголовку (direction) в пределах линии:
+        id гипотезы эфемерен (пересоздаётся при регенерации), поэтому запись
+        могла быть создана под другим id — по заголовку находим её надёжно."""
+        clauses: list[str] = []
+        params: list[str] = []
+        if hypothesis_id:
+            clauses.append("hypothesis_id=?")
+            params.append(hypothesis_id)
+        if direction and direction.strip():
+            clauses.append("lower(direction)=lower(?)")
+            params.append(direction.strip())
+        if not clauses:
+            return 0
         with self._lock:
             cur = self._conn.execute(
-                "DELETE FROM line_stoplist WHERE hypothesis_id=?", (hypothesis_id,))
+                f"DELETE FROM line_stoplist WHERE line_id=? AND ({' OR '.join(clauses)})",
+                [line_id, *params])
             self._conn.commit()
             return cur.rowcount
 

@@ -26,6 +26,7 @@ export default function ExportScreen() {
   // канбан: перенос карточки в другую колонку меняет статус гипотезы (персист в БД,
   // виден на экране «Гипотезы»). Оптимистично двигаем локально, при ошибке — откат.
   const moveHypothesis = async (id: string, status: string) => {
+    setErr('')  // сбрасываем прошлую ошибку, иначе устаревший ErrorBox висит
     setHyps(prev => prev && prev.map(h => (h.id === id ? { ...h, status } : h)))
     try { await api.setHypothesisStatus(id, status) }
     catch (e) { setErr(String(e)); api.hypotheses(pid).then(setHyps).catch(() => { }) }

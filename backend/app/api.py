@@ -636,14 +636,17 @@ def generate(pid: str, body: GenerateIn, store: Store = Depends(get_store),
     from .flowsheet import summarize_for_prompt, zero_reagent_hints
     factory, _fs = _project_flowsheet(pid, store)
     project_equipment = project.project_constraints.equipment
-    # стоп-лист линии (память фидбэка по объекту) + legacy project.stoplist;
-    # каждая запись — «направление — причина», дедуп без учёта регистра
-    stoplist = list(project.stoplist)
+    # стоп-лист линии (память фидбэка по объекту) + legacy project.stoplist.
+    # В фильтр/промпт подаём ГОЛОЕ направление (заголовок): тогда детерминированный
+    # подстрочный фильтр по заголовку в _postprocess реально срабатывает (причина —
+    # свободный текст — в заголовок не попадает; её видно в БЗ). Пустые/пробельные
+    # отбрасываем — иначе "" оказалось бы подстрокой любого заголовка и обнулило
+    # бы всю генерацию. Дедуп без учёта регистра.
+    stoplist = [x for x in project.stoplist if x and x.strip()]
     for s in store.list_line_stoplist(project.plant):
-        entry = f"{s.direction} — {s.reason}" if s.direction and s.reason \
-            else (s.direction or s.reason)
-        if entry:
-            stoplist.append(entry)
+        d = (s.direction or s.reason).strip()
+        if d:
+            stoplist.append(d)
     seen: set[str] = set()
     stoplist = [x for x in stoplist if not (x.lower() in seen or seen.add(x.lower()))]
     hyps = generate_hypotheses(
@@ -718,8 +721,9 @@ def feedback(hid: str, body: FeedbackIn, store: Store = Depends(get_store)) -> d
         # идёт заголовок гипотезы (что не предлагать снова) + причина эксперта.
         store.add_line_stop(project.plant, direction=h.title, reason=body.reason,
                             project_id=pid, hypothesis_id=hid)
-    else:  # accept — снимаем направление со стоп-листа, если раньше отклоняли
-        store.remove_line_stop_for_hypothesis(hid)
+    else:  # accept — снимаем направление со стоп-листа (по id ИЛИ заголовку,
+        # т.к. id гипотезы мог смениться при регенерации после прошлого reject)
+        store.remove_line_stop(project.plant, hypothesis_id=hid, direction=h.title)
     return {"id": hid, "status": h.status,
             "line_stoplist": [s.model_dump() for s in store.list_line_stoplist(project.plant)]}
 

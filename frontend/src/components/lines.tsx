@@ -53,7 +53,8 @@ function useOutsideClose(open: boolean, onClose: () => void) {
 }
 
 function KindBadge({ kind }: { kind: LineKind }) {
-  return <span className={`badge ${kind === 'лаборатория' ? 'badge-warn' : ''}`}>{kind}</span>
+  const cls = kind === 'лаборатория' ? 'badge-warn' : kind === 'фабрика' ? 'badge-brand' : ''
+  return <span className={`badge ${cls}`}>{kind}</span>
 }
 
 /** Бейдж показывается только для внешних партнёров — свои институты не маркируются. */

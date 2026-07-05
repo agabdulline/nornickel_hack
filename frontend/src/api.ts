@@ -57,6 +57,8 @@ export const api = {
       method: 'PATCH', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
     })),
+  deleteLine: (id: string) =>
+    j<{ ok: boolean }>(fetch(`/api/lines/${encodeURIComponent(id)}`, { method: 'DELETE' })),
 
   // ---------- стоп-лист линии (память фидбэка по объекту) ----------
   lineStoplist: (lineId: string) =>

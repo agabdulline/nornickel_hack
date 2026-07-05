@@ -88,6 +88,13 @@ def update_line(line_id: str, body: LinePatch, store: Store = Depends(get_store)
     return line
 
 
+@router.delete("/lines/{line_id}")
+def delete_line(line_id: str, store: Store = Depends(get_store)) -> dict:
+    """Удалить объект (фабрику/линию/лабораторию). Привязанные проекты станут
+    «без привязки к объекту», объект больше не воскресает сидом/миграцией."""
+    return {"ok": store.delete_line(line_id)}
+
+
 # ---------- стоп-лист линии (память фидбэка по объекту) ----------
 @router.get("/lines/{line_id}/stoplist")
 def line_stoplist(line_id: str, store: Store = Depends(get_store)) -> list[StopEntry]:

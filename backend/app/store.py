@@ -43,6 +43,9 @@ CREATE TABLE IF NOT EXISTS equipment (
 CREATE TABLE IF NOT EXISTS lines (
   id TEXT PRIMARY KEY, name TEXT, type TEXT, kind TEXT, ownership TEXT
 );
+CREATE TABLE IF NOT EXISTS deleted_lines (
+  id TEXT PRIMARY KEY
+);
 CREATE TABLE IF NOT EXISTS materials (
   id TEXT PRIMARY KEY, name TEXT
 );
@@ -110,7 +113,7 @@ _SEED_EQUIPMENT: dict[str, list[dict]] = {
 # данных проекта, а не в имени объекта); id при этом не трогаем.
 _SEED_LINES: list[dict] = [
     {"id": "НОФ · вкрапленные руды", "name": "НОФ",
-     "kind": "производственная линия", "ownership": "в штате компании"},
+     "kind": "фабрика", "ownership": "в штате компании"},
     {"id": _INSTITUTE, "name": _INSTITUTE,
      "kind": "лаборатория", "ownership": "в штате компании"},
     {"id": _PARTNER, "name": _PARTNER,
@@ -278,6 +281,14 @@ class Store:
             self._conn.execute(
                 "UPDATE lines SET name=? WHERE id=? AND name=?",
                 (new_name, line_id, old_name))
+        # 4. НОФ/ТОФ/КГМК — это ФАБРИКИ, а не производственные линии (см. источники).
+        #    Проставляем тип «фабрика» демо-объектам, но только если тип ещё
+        #    «производственная линия» (не перебиваем ручную правку пользователя).
+        for line_id in ("НОФ · вкрапленные руды", "ТОФ · пирротиновые хвосты",
+                        "КГМК · вкрапленные руды"):
+            self._conn.execute(
+                "UPDATE lines SET kind='фабрика' WHERE id=? AND kind='производственная линия'",
+                (line_id,))
 
     def _migrate_project_lines(self):
         """Реконсиляция привязки проект→линия (line-scoped данные).
@@ -317,7 +328,10 @@ class Store:
         # посрочная проверка по id (как в _seed_equipment) — иначе на уже
         # существующей БД первой итерации новые сид-линии (институт, партнёр)
         # никогда бы не появились, раз таблица lines уже не пуста
+        deleted = {r["id"] for r in self._conn.execute("SELECT id FROM deleted_lines")}
         for line in _SEED_LINES:
+            if line["id"] in deleted:
+                continue  # объект удалён пользователем — не воскрешаем сидом
             existing = self._conn.execute(
                 "SELECT COUNT(*) c FROM lines WHERE id=?", (line["id"],)).fetchone()["c"]
             if existing:
@@ -476,6 +490,24 @@ class Store:
                                (line.name, line.kind, line.kind, line.ownership, line.id))
             self._conn.commit()
         return line
+
+    def delete_line(self, line_id: str) -> bool:
+        """Удаляет объект (фабрику/линию/лабораторию). Проекты, привязанные к
+        нему, становятся «без привязки» (plant=''), а оборудование/сырьё/стоп-лист
+        объекта чистятся. id заносится в deleted_lines: пустой plant проекта
+        _migrate_project_lines пропускает, а сид не воскрешает объект по томбстоуну.
+        Возвращает False, если объекта не было."""
+        with self._lock:
+            if not self._conn.execute("SELECT 1 FROM lines WHERE id=?", (line_id,)).fetchone():
+                return False
+            self._conn.execute("UPDATE projects SET plant='' WHERE plant=?", (line_id,))
+            for t, col in (("equipment", "line_id"), ("line_materials", "line_id"),
+                           ("line_stoplist", "line_id")):
+                self._conn.execute(f"DELETE FROM {t} WHERE {col}=?", (line_id,))
+            self._conn.execute("INSERT OR IGNORE INTO deleted_lines (id) VALUES (?)", (line_id,))
+            self._conn.execute("DELETE FROM lines WHERE id=?", (line_id,))
+            self._conn.commit()
+            return True
 
     # ---------- справочник материалов (переиспользуется в ограничениях проекта) ----------
     def list_materials(self) -> list[Material]:

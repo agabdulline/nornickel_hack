@@ -9,7 +9,7 @@ import {
 import FactoryImages from '../components/FactoryImages'
 import FlowsheetText from '../components/FlowsheetText'
 
-const KIND_OPTIONS: LineKind[] = ['производственная линия', 'лаборатория']
+const KIND_OPTIONS: LineKind[] = ['фабрика', 'производственная линия', 'лаборатория']
 const OWNERSHIP_OPTIONS: LineOwnership[] = ['в штате компании', 'внешний подрядчик/партнёр']
 
 /** Раздел «Фабрики и лаборатории»: те же мастер-данные, что и в форме проекта
@@ -101,14 +101,26 @@ function LinesSection() {
     } finally { setSaving(false) }
   }
 
+  const deleteLine = async (line: Line) => {
+    if (!window.confirm(
+      `Удалить объект «${line.name}»?\nПривязанные проекты станут «без привязки к объекту», `
+      + 'а оборудование и сырьё объекта будут удалены. Действие необратимо.')) return
+    try {
+      await api.deleteLine(line.id)
+      setLines(prev => prev.filter(l => l.id !== line.id))
+      if (expanded === line.id) setExpanded(null)
+      if (editingLineId === line.id) setEditingLineId(null)
+    } catch { api.lines().then(setLines).catch(() => { }) }
+  }
+
   return (
     <Panel
-      title="Фабрики и лаборатории"
-      subtitle="Мастер-данные объектов: оборудование и сырьё для проверки гипотез"
+      title="Объекты"
+      subtitle="Фабрики, линии и лаборатории: оборудование и сырьё для проверки гипотез"
       bodyClass="p-4 space-y-3"
       actions={
         <button className="btn btn-sm" onClick={() => setCreating(v => !v)}>
-          <Icon name="plus" className="w-4 h-4" />Новая линия/лаборатория
+          <Icon name="plus" className="w-4 h-4" />Новый объект
         </button>
       }
     >
@@ -161,7 +173,8 @@ function LinesSection() {
                     {line.ownership === 'внешний подрядчик/партнёр' && (
                       <Badge tone="brand">внешний партнёр</Badge>
                     )}
-                    <Badge tone={line.kind === 'лаборатория' ? 'warn' : 'default'}>{line.kind}</Badge>
+                    <Badge tone={line.kind === 'лаборатория' ? 'warn'
+                      : line.kind === 'фабрика' ? 'brand' : 'default'}>{line.kind}</Badge>
                   </button>
                 )}
                 <div className="flex items-center gap-2 shrink-0">
@@ -172,8 +185,15 @@ function LinesSection() {
                       <button type="button" className="btn btn-sm" disabled={saving} onClick={cancelEdit}>Отмена</button>
                     </>
                   ) : (
-                    <button type="button" className="btn btn-ghost btn-sm text-brand"
-                      onClick={() => startEdit(line)}>Изменить</button>
+                    <>
+                      <button type="button" className="btn btn-ghost btn-sm text-brand"
+                        onClick={() => startEdit(line)}>Изменить</button>
+                      <button type="button" title="Удалить объект" aria-label="Удалить объект"
+                        className="btn btn-ghost btn-sm text-danger px-1.5"
+                        onClick={() => deleteLine(line)}>
+                        <Icon name="trash" className="w-4 h-4" />
+                      </button>
+                    </>
                   )}
                 </div>
               </div>
@@ -187,7 +207,7 @@ function LinesSection() {
                     </>
                   ) : (
                     <>
-                      {line.kind === 'производственная линия' && (
+                      {line.kind !== 'лаборатория' && (
                         <FlowsheetText lineId={line.id} lineName={line.name} />
                       )}
                       <div>

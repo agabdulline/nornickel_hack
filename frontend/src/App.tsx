@@ -186,7 +186,7 @@ function Home() {
   }
 
   const create = async () => {
-    if (!line) { setErr('Выберите фабрику/линию'); return }
+    if (!line) { setErr('Выберите объект'); return }
     try {
       const finalName = name.trim() || defaultProjectName(line.name)
       const p = await api.createProject({
@@ -236,7 +236,7 @@ function Home() {
                 value={name} onChange={e => setName(e.target.value)} />
             </label>
             <label className="block lg:flex-1 min-w-0">
-              <span className="field-label">Фабрика / линия</span>
+              <span className="field-label">Объект</span>
               <LineCombobox value={line} onSelect={selectLine} allowCreate={false} />
             </label>
             <label className="block lg:flex-1 min-w-0">
@@ -295,7 +295,7 @@ function Home() {
                 value={name} onChange={e => setName(e.target.value)} />
             </label>
             <label className="block">
-              <span className="field-label">Фабрика / линия</span>
+              <span className="field-label">Объект</span>
               <LineCombobox value={line} onSelect={selectLine} allowCreate={false} />
             </label>
             <label className="block">

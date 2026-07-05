@@ -354,3 +354,8 @@ input[type="range"] { accent-color: var(--c-brand); }
   /* без анимаций пунктир остаётся статичным и видимым, пока JS не снимет класс */
   .flash-highlight::after { animation: none !important; opacity: 1; }
 }
+
+/* LARP-логотип в шапке (коллаборация): бренд-белый вордмарк. На светлой теме
+   инвертируем в тёмный (иначе бы пропал на светлом фоне), на тёмной — белый как есть. */
+.logo-larp { filter: invert(1); opacity: .82; }
+:root[data-theme="dark"] .logo-larp { filter: none; opacity: .92; }

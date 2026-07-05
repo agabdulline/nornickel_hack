@@ -239,12 +239,31 @@ class Store:
                            ("line_materials", "line_id")):
                 self._conn.execute(f"UPDATE {t} SET {col}=? WHERE {col}=?", (nof, med))
             self._conn.execute("DELETE FROM lines WHERE id=?", (med,))
-        # 2. корректные имена (id стабилен; трогаем, только если имя ещё сырое)
+        # 2. ОФ «Заполярная» = тоже Кольская ГМК (линия КГМК уже есть) — убираем
+        #    дублирующую демо-линию и её ПУСТОЙ тест-проект. Проект с отчётом не
+        #    трогаем (вдруг им реально пользуются), и линию не удаляем, пока на
+        #    неё ссылается хоть один проект.
+        for r in self._conn.execute(
+                "SELECT id FROM projects WHERE plant LIKE '%Заполярн%'").fetchall():
+            if self._conn.execute("SELECT 1 FROM reports WHERE project_id=?",
+                                   (r["id"],)).fetchone():
+                continue
+            for t in ("hypotheses", "feedback", "roadmaps", "chat_messages", "chats"):
+                self._conn.execute(f"DELETE FROM {t} WHERE project_id=?", (r["id"],))
+            self._conn.execute("DELETE FROM projects WHERE id=?", (r["id"],))
+        for r in self._conn.execute(
+                "SELECT id FROM lines WHERE id LIKE '%Заполярн%'").fetchall():
+            if self._conn.execute("SELECT 1 FROM projects WHERE plant=?", (r["id"],)).fetchone():
+                continue
+            for t, col in (("line_stoplist", "line_id"), ("equipment", "line_id"),
+                           ("line_materials", "line_id")):
+                self._conn.execute(f"DELETE FROM {t} WHERE {col}=?", (r["id"],))
+            self._conn.execute("DELETE FROM lines WHERE id=?", (r["id"],))
+        # 3. корректные имена (id стабилен; трогаем, только если имя ещё сырое)
         for line_id, new_name, old_name in [
             ("НОФ · вкрапленные руды", "НОФ", "НОФ · вкрапленные руды"),
             ("КГМК · вкрапленные руды", "КГМК", "КГМК · вкрапленные руды"),
             ("ТОФ · пирротиновые хвосты", "ТОФ", "ТОФ · пирротиновые хвосты"),
-            ("ОФ «Заполярная» · пилот", "ОФ «Заполярная»", "ОФ «Заполярная» · пилот"),
         ]:
             self._conn.execute(
                 "UPDATE lines SET name=? WHERE id=? AND name=?",

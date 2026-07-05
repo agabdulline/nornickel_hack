@@ -47,19 +47,14 @@ export function Icon({ name, className = 'w-4 h-4', strokeWidth = 2 }:
 }
 
 /* --------------------------------- Логотип ------------------------------- */
-export function Logo({ compact = false }: { compact?: boolean }) {
+export function Logo() {
   return (
     <span className="inline-flex items-center gap-3 select-none">
-      {/* коллаборация компаний: Норникель + LARP, затем название продукта */}
+      {/* коллаборация компаний: Норникель × LARP */}
       <img src="/norm-logo.png" alt="Норникель" className="h-8 w-auto shrink-0" />
-      <img src="/larp_logo.png" alt="LARP" title="в коллаборации с LARP"
-        className="logo-larp h-6 w-auto shrink-0" />
-      {!compact && (
-        <span className="font-extrabold tracking-tight text-[15px] leading-none pl-1"
-          style={{ color: 'var(--c-brand-strong)' }}>
-          Фабрика&nbsp;гипотез
-        </span>
-      )}
+      <span className="text-xl font-light leading-none" style={{ color: 'var(--c-faint)' }}>×</span>
+      <img src="/larp_logo.png" alt="LARP" title="Норникель × LARP"
+        className="logo-larp h-8 w-auto shrink-0" />
     </span>
   )
 }
